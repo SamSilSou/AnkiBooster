@@ -29,7 +29,12 @@ Ele identifica seus cartões com mais erros e dificuldades, e os exibe ao longo 
 ## 📦 Instalação Rápida (Recomendado)
 
 ```bash
-python install.py
+# 1. Clone o repositório
+git clone https://github.com/SEU_USUARIO/anki-booster.git
+cd anki-booster
+
+# 2. Execute o instalador automático
+python3 install.py
 ```
 
 O instalador vai:
