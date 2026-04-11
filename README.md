@@ -16,7 +16,7 @@ Ele identifica seus cartões com mais erros e dificuldades, e os exibe ao longo 
 ## ✨ Funcionalidades
 
 - 🧠 **SRS Complementar:** Respeita o ritmo global + delay individual por resposta (Fácil / Ok / Difícil / Errei)  
-- 🔄 **Buffer Rotativo Infinito:** Cards saem e entram automaticamente. Revise 50, 100, 200+ cards/dia  
+- 🔄 **Buffer Rotativo Infinito:** Cards saem e entram automaticamente. Revise 50, 100, 200+ cards/dia a mais de forma ágil  
 - ⭐ **Sistema de Favoritos com Progressão:** Marque os difíceis, suba de nível (N1 → N2 → N3) e gradue quando dominar  
 - 📊 **Foco nas Fraquezas:** Ordenação automática por erros recentes > streak < bônus de favorito  
 - 📡 **API TCP Local:** Controle via CLI, scripts ou addons do Anki (START, SAVE_CONFIG, TOGGLE_FAV, etc.)  
