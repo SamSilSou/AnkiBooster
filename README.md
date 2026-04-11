@@ -1,7 +1,7 @@
 # AnkiBooster
 
 # 🚀 Anki Booster
-*"Se o Anki é tão incrível, por que não utilizá-lo o dia todo?"*
+##*"Se o Anki é tão incrível, por que não utilizá-lo o dia todo?"*
 
 ---
 
