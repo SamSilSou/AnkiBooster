@@ -30,8 +30,8 @@ Ele identifica seus cartões com mais erros e dificuldades, e os exibe ao longo 
 
 ```bash
 # 1. Clone o repositório
-git clone https://github.com/SEU_USUARIO/anki-booster.git
-cd anki-booster
+git clone https://github.com/SamSilSou/AnkiBooster.git
+cd AnkiBooster
 
 # 2. Execute o instalador automático
 python3 install.py
