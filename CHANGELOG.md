@@ -71,3 +71,16 @@ Primeira versão funcional do Anki Booster. Foco absoluto no motor de repetiçã
 - Atalhos de teclado removidos por instabilidade com QtWebEngine no Linux.
 
 ### 📦 Estrutura de Arquivos
+
+Anki_Booster/
+├── booster_service.py # Backend (PyQt6 + SRS + TCP Listener)
+├── theme.qml # UI estática (QtQuick + WebEngine)
+├── booster_utils.py # Utilitários (DB, config, HTML wrapper, parser)
+└── anki_booster/ # Dados gerados em runtime
+├── anki_booster.db
+├── anki_booster_state.json
+├── anki_booster_daily.json
+└── anki_booster_config.json
+
+
+> 💡 *A v0.1 entregou o núcleo: motor funcionando, estado salvo, comunicação estável. A base necessária para transformar uma ferramenta crua em uma experiência fluida na v0.2.*
