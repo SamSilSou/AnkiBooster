@@ -35,7 +35,7 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
   "SOUND_VOLUME": 0.5,
   "HIDE_FURIGANA_ON_HOVER": false
 }
-
+```
 
 --- 
 
