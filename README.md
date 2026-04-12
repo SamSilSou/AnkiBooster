@@ -26,9 +26,6 @@ Ele identifica seus cartões com mais erros e dificuldades, e os exibe ao longo 
 - **Modo "Esconder Furigana" (Hover)**: Anotações `<ruby>` (como furiganas ou pinyin) ficam ocultas por padrão e só aparecem ao passar o mouse. Ideal para testar o recall antes de ver a leitura.  
 ---
 
-
----
-
 ## 🧠 Como Funciona o Motor SRS
 
 O Anki Booster não substitui o algoritmo do Anki — ele **complementa** com um sistema de reforço contínuo baseado em 3 pilares:
