@@ -186,7 +186,7 @@ class App:
         self.reviewing = False
         self._current_card = None
         #self.next_global_show = now + self.config["GLOBAL_CORRECT"]
-        self.next_global_show = now # ✅ Força verificação imediata: snooze não deve atrasar o fluxo
+        self.next_global_show = now # Força verificação imediata: snooze não deve atrasar o fluxo
 
         next_time = datetime.datetime.fromtimestamp(now + snooze_delay).strftime("%H:%M:%S")
         log(f"🌙 Card {cid} adiado por 1h (volta às {next_time})", "OK")
@@ -367,7 +367,7 @@ class App:
             
         favs_set = set(get_all_favs())
         
-        # 🔍 DEBUG: Calcula prioridade para cada card disponível (só log se tiver favoritos)
+        # DEBUG: Calcula prioridade para cada card disponível (só log se tiver favoritos)
         favs_available = [c for c in available_cards if str(c["id"]) in favs_set]
         if favs_available:
             log(f"🔍 {len(favs_available)} favoritos disponíveis agora", "INFO")
@@ -396,7 +396,7 @@ class App:
         level = card.get("fav_level", 1) if starred else 1
         consecutive = card.get("fav_consecutive", 0) if starred else 0
         
-        # 🔍 DEBUG: Card selecionado
+        # DEBUG: Card selecionado
         log(f"🎯 Card selecionado: {card['id']} | fav={starred} | errors={card['errors_recent']} | streak={card.get('streak',0)}", "OK")
         
         front_wrapped = _wrap_html(card["front"], starred, level, consecutive, self.config)

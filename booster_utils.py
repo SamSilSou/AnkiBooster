@@ -51,7 +51,7 @@ DEFAULT_CONFIG = {
     "FRONT_FIELDS": None,
     "BACK_FIELDS": None,
     "MIN_CARD_DELAY": 20,
-    "HIDE_FURIGANA_ON_HOVER": False  # 🈶 Oculta furigana até hover no popup
+    "HIDE_FURIGANA_ON_HOVER": False  # Oculta furigana até hover no popup
 }
 
 def load_config() -> Dict[str, Any]:
@@ -194,7 +194,7 @@ def _wrap_html(content: str, starred: bool = False, level: int = 1, consecutive:
     </style>
     """
 
-    # 🈶 CSS Furigana Hover (injetado no popup se ativado)
+    # CSS Furigana Hover (injetado no popup se ativado)
     furigana_css = ""
     if config and config.get("HIDE_FURIGANA_ON_HOVER"):
         furigana_css = """
