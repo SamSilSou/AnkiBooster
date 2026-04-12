@@ -27,7 +27,6 @@ Ele identifica seus cartões com mais erros e dificuldades, e os exibe ao longo 
 ---
 
 ## 🧠 Como Funciona o Motor SRS
-
 O Anki Booster não substitui o algoritmo do Anki — ele **complementa** com um sistema de reforço contínuo baseado em 3 pilares:
 
 ### 🔹 Delay Individual por Resposta
