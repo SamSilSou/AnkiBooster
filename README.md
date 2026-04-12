@@ -22,8 +22,8 @@ Ele identifica seus cartões com mais erros e dificuldades, e os exibe ao longo 
 - 📡 **API TCP Local:** Controle via CLI, scripts ou addons do Anki (START, SAVE_CONFIG, TOGGLE_FAV, etc.)  
 - 🪶 **Leve & Não Invasivo:** <1% CPU, leitura segura do DB do Anki (cópia temporária + mode=ro), zero alteração no seu baralho  
 - 🎨 **UI Minimalista:** Janela 440×320, sempre no topo, animações sutis, áudio embutido em Base64  
-- 🔄 **Instalação Automática:** Script install.py configura tudo + autostart no sistema  
-
+- 🔄 **Instalação Automática:** Script install.py configura tudo + autostart no sistema
+- **Modo "Esconder Furigana" (Hover)**: Anotações `<ruby>` (como furiganas ou pinyin) ficam ocultas por padrão e só aparecem ao passar o mouse. Ideal para testar o recall antes de ver a leitura.
 ---
 
 ## 📦 Instalação Rápida (Recomendado)
