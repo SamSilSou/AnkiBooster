@@ -73,7 +73,8 @@ def main():
     # 2. Arquivos/Pastas para copiar
     items_to_copy = [
         "booster_service.py", "booster_utils.py", "theme.qml",
-        "autostart.py", "anki_booster.vbs", "requirements.txt", "anki_extension"
+        "autostart.py", "anki_booster.vbs", "requirements.txt", "anki_extension",
+        "sounds"
     ]
     
     copied = 0

@@ -22,12 +22,12 @@ from booster_utils import (
 )
 
 # ───────────────── CONSTANTES DE MÓDULO ─────────────────
-VALID_CONFIG_KEYS = set(DEFAULT_CONFIG.keys())  # ← Constante única, reutilizável
+VALID_CONFIG_KEYS = set(DEFAULT_CONFIG.keys())
 
 # ───────────────── VARIÁVEIS GLOBAIS DE CONFIG ─────────────────
 LIMIT_CARDS = GLOBAL_CORRECT = GLOBAL_WRONG = MAX_DAILY = BUFFER_SIZE = None
 FAVS_PRIORITY = REVLOG_DAYS = REVLOG_TYPES = FAV_BONUS = None
-FAV_LEVELS = {1: 6, 2: 4, 3: 2}  # ← Global, usada em todo o módulo
+FAV_LEVELS = {1: 6, 2: 4, 3: 2}
 
 # ───────────────── PONTE PYTHON ↔ QML ─────────────────
 class Bridge(QObject):
@@ -60,6 +60,11 @@ class Bridge(QObject):
     def toggleFullscreen(self):
         if self.app:
             self.app.toggle_fullscreen()
+    
+    @pyqtSlot()
+    def snoozeCard(self):
+        if self.app:
+            self.app.snooze_current_card()
     
     def _send_answer(self, level: str):
         if self.pending_callback:
@@ -103,6 +108,7 @@ class App:
         self.reviewing = False
         self.allow_showing = False
         self.paused = False
+        self._current_card = None
 
         # Inicializa UI
         self.bridge = Bridge(self)
@@ -128,7 +134,7 @@ class App:
             | Qt.WindowType.WindowStaysOnTopHint
         )
 
-        # 🔍 Debug: mostre o que foi carregado
+        # 🔍 Debug config
         log(f"🔍 CONFIG_FILE: {CONFIG_FILE}", "INFO")
         if os.path.exists(CONFIG_FILE):
             try:
@@ -160,7 +166,31 @@ class App:
         REVLOG_DAYS = self.config["REVLOG_DAYS"]
         REVLOG_TYPES = self.config.get("REVLOG_TYPES", [0, 1, 2, 3])
         FAV_BONUS = FAVS_PRIORITY
-        # FAV_LEVELS já é global, não precisa reatribuir aqui (mantém {1:6, 2:4, 3:2})
+    
+    # ───────────────── SNOOZE UTILS ─────────────────
+    def snooze_current_card(self):
+        """Adia o card atual por 1 hora (sem remover do buffer ou mudar streak ou qualquer coisa sobre o card)"""
+        if not self._current_card:
+            log("⚠️ Nenhum card ativo para snooze", "WARN")
+            return
+        
+        cid = str(self._current_card["id"])
+        now = time.time()
+        snooze_delay = 3600
+        
+        self._current_card["next_due"] = now + snooze_delay
+        self.state[cid] = self._current_card
+        save_json_file(STATE_FILE, self.state)
+        
+        self.bridge.hide.emit()
+        self.reviewing = False
+        self._current_card = None
+        #self.next_global_show = now + self.config["GLOBAL_CORRECT"]
+        self.next_global_show = now # ✅ Força verificação imediata: snooze não deve atrasar o fluxo
+
+        next_time = datetime.datetime.fromtimestamp(now + snooze_delay).strftime("%H:%M:%S")
+        log(f"🌙 Card {cid} adiado por 1h (volta às {next_time})", "OK")
+        #log("Ok, todos os snooze foram lidos")
     
     # ───────────────── TCP LISTENER ─────────────────
     def tcp_listener(self):
@@ -193,12 +223,43 @@ class App:
                     self.config = load_config()
                     self._apply_config_globals()
                     
+                    # 🔍 DEBUG: Log de carregamento de cards
+                    log(f"🔍 Carregando cards do Anki (LIMIT_CARDS={LIMIT_CARDS}, FAVS_PRIORITY={FAVS_PRIORITY})...", "INFO")
                     self.cards = load_cards_from_anki(self.config, self.state, self.daily)
+                    
                     if self.cards:
+                        # 🔍 DEBUG: Resumo dos cards carregados
+                        favs_in_cards = [c for c in self.cards if str(c["id"]) in get_all_favs()]
+                        log(f"✅ {len(self.cards)} cards carregados | {len(favs_in_cards)} são favoritos", "OK")
+                        
+                        # 🔍 DEBUG: Lista favoritos que NÃO foram carregados (se houver)
+                        all_favs = get_all_favs()
+                        loaded_fav_ids = {str(c["id"]) for c in self.cards if str(c["id"]) in all_favs}
+                        filtered_favs = [f for f in all_favs if f not in loaded_fav_ids]
+                        
+                        if filtered_favs:
+                            reasons = []
+                            now = time.time()
+                            for cid in filtered_favs[:3]:  # Mostra os 3 primeiros pra não poluir
+                                s_cid = self.state.get(cid, {})
+                                due = s_cid.get("next_due", 0)
+                                hits = self.daily.get("cards_today", {}).get(cid, 0)
+                                
+                                if due > now:
+                                    wait_min = int((due - now) / 60)
+                                    reasons.append(f"{cid} (snooze: {wait_min}min)")
+                                elif hits >= 5:
+                                    reasons.append(f"{cid} (limite diário: {hits}/5)")
+                                else:
+                                    reasons.append(f"{cid} (filtro)")
+                            log(f"⏳ {len(filtered_favs)} favoritos agendados/filtrados: {', '.join(reasons)}{'...' if len(filtered_favs)>3 else ''}", "INFO")
+
+                        
                         self.prepare_buffer()
                         self.allow_showing = True
                         conn.sendall(b"OK")
                         log("⬆️ OK", "OK")
+                        log("-------------------------------------------------")
                     else:
                         if not is_anki_closed():
                             conn.sendall(b"ANKI_OPEN")
@@ -224,7 +285,6 @@ class App:
                         json_str = cmd[len("SAVE_CONFIG:"):]
                         new_cfg = json.loads(json_str)
                         
-                        # 🔥 Usa constante de módulo + merge inteligente
                         filtered_cfg = {k: v for k, v in new_cfg.items() if k in VALID_CONFIG_KEYS}
                         current_cfg = load_config()
                         final_cfg = {**current_cfg, **filtered_cfg}
@@ -274,6 +334,11 @@ class App:
         self.active_cards = self.pool_cards[:BUFFER_SIZE]
         self.pool_cards = self.pool_cards[BUFFER_SIZE:]
         log(f"📦 Buffer {len(self.active_cards)} | Pool {len(self.pool_cards)}")
+        
+        # 🔍 DEBUG: Mostra IDs no buffer ativo
+        if self.active_cards:
+            active_ids = [str(c["id"]) for c in self.active_cards]
+            log(f"🔍 Buffer ativo: {active_ids[:3]}{'...' if len(active_ids)>3 else ''}", "INFO")
 
     # ───────────────── MAIN LOOP ─────────────────
     def loop(self):
@@ -288,11 +353,33 @@ class App:
             return
             
         available_cards = [c for c in self.active_cards if c.get("next_due", 0) <= now]
+        
+        # 🔍 DEBUG: Por que nenhum card disponível?
+        if not available_cards and self.active_cards:
+            blocked = [c for c in self.active_cards if c.get("next_due", 0) > now]
+            log(f"⚠️ {len(blocked)}/{len(self.active_cards)} cards bloqueados por next_due", "WARN")
+            if blocked:
+                sample = blocked[0]
+                log(f"🔍 Exemplo: CID {sample['id']} | next_due={sample['next_due']:.0f} | agora={now:.0f} | falta={(sample['next_due']-now)/60:.1f}min", "INFO")
+            return
         if not available_cards:
             return
             
-        # ♻️ Cache de favoritos (evita query duplicada no process_card)
         favs_set = set(get_all_favs())
+        
+        # 🔍 DEBUG: Calcula prioridade para cada card disponível (só log se tiver favoritos)
+        favs_available = [c for c in available_cards if str(c["id"]) in favs_set]
+        if favs_available:
+            log(f"🔍 {len(favs_available)} favoritos disponíveis agora", "INFO")
+            for c in favs_available[:2]:  # Só os 2 primeiros pra não spammar
+                cid = str(c["id"])
+                errors = c["errors_recent"]
+                streak = c.get("streak", 0)
+                fav_bonus = FAV_BONUS if cid in favs_set else 0
+                priority = (-errors, streak, -fav_bonus)
+                hits = self.daily["cards_today"].get(cid, 0)
+                log(f"   📍 {cid} | errors={errors} | streak={streak} | fav_bonus={fav_bonus} | priority={priority} | hits={hits}/5", "INFO")
+        
         card = min(
             available_cards,
             key=lambda c: (
@@ -304,9 +391,13 @@ class App:
 
         self.reviewing = True
         self.last_card_time = now
+        self._current_card = card
         starred = str(card["id"]) in favs_set
         level = card.get("fav_level", 1) if starred else 1
         consecutive = card.get("fav_consecutive", 0) if starred else 0
+        
+        # 🔍 DEBUG: Card selecionado
+        log(f"🎯 Card selecionado: {card['id']} | fav={starred} | errors={card['errors_recent']} | streak={card.get('streak',0)}", "OK")
         
         front_wrapped = _wrap_html(card["front"], starred, level, consecutive, self.config)
         back_wrapped = _wrap_html(card["back"], starred, level, consecutive, self.config)
@@ -319,7 +410,6 @@ class App:
         cid = str(card["id"])
         log(f"🧠 Processando {cid} com nível '{level}'")
 
-        # ♻️ Usa favs_set passado como argumento (evita nova query SQL)
         if favs_set is None:
             favs_set = set(get_all_favs())
         
@@ -327,10 +417,9 @@ class App:
         count = self.daily["cards_today"].get(cid, 0)
         is_fav = cid in favs_set
 
-        # ───────── LÓGICA: Multiplicadores baseados em GLOBAL_CORRECT ─────────
         if level == "Fácil":
             count += 1
-            card["streak"] += 2  # ← Corrigido: era +3 no log, +2 no código
+            card["streak"] += 2
             card["errors_recent"] = max(0, card["errors_recent"] - 2)
             card_delay = GLOBAL_CORRECT * 3 - 15
             log(f"✅ Fácil: streak +2, erros -2, delay = {card_delay/60:.1f}min", "OK")
@@ -357,11 +446,10 @@ class App:
             card_delay = GLOBAL_CORRECT
             log(f"⚠️ Nível desconhecido '{level}', usando delay padrão", "WARN")
 
-        # ───────── Lógica de Favoritos (usa FAV_LEVELS global) ─────────
         if is_fav and level != "Errei":
             card["fav_consecutive"] = card.get("fav_consecutive", 0) + 1
             current_level = card.get("fav_level", 1)
-            required = FAV_LEVELS.get(current_level, 5)  # ← Global, não recriada
+            required = FAV_LEVELS.get(current_level, 5)
             
             if card["fav_consecutive"] >= required:
                 if current_level < 3:
@@ -381,20 +469,17 @@ class App:
             card["fav_consecutive"] = 0
             log(f"🔙 Favorito resetado do N{old_level} para N1", "WARN")
 
-        # ───────── Atualiza próximo agendamento ─────────
         card["next_due"] = float(now + card_delay)
         next_time = datetime.datetime.fromtimestamp(card["next_due"]).strftime("%H:%M:%S")
         log(f"⏳ Próxima exibição do card em {int(card_delay)}s ({next_time})")
         log("-------------------------------------------------")
 
-        # ───────── Salva estado persistente ─────────
         self.daily["cards_today"][cid] = count
         save_json_file(DAILY_FILE, self.daily)
         self.state[cid] = card
         save_json_file(STATE_FILE, self.state)
         self.last_card_correct = level != "Errei"
 
-        # ───────── Rotação do buffer ─────────
         try:
             idx = next(i for i, c in enumerate(self.active_cards) if c["id"] == card["id"])
             if count >= max_hits:
@@ -409,11 +494,11 @@ class App:
         except StopIteration:
             pass
 
-        # 🌍 Ritmo global fixo: próximo card em GLOBAL_CORRECT segundos
         self.next_global_show = now + GLOBAL_CORRECT
         next_hr = datetime.datetime.fromtimestamp(self.next_global_show).strftime("%H:%M:%S")
         log(f"⏳ Ritmo global: próximo card em {GLOBAL_CORRECT}s ({next_hr})")
         self.reviewing = False
+        self._current_card = None
     
     def toggle_fullscreen(self):
         """Alterna entre janela normal e fullscreen"""

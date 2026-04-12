@@ -1,0 +1,15 @@
+Use esse comando para ver os favoritos atuais
+
+sqlite3 "$ANKI_DB" "SELECT n.flds FROM cards c JOIN notes n ON c.nid = n.id WHERE c.id = 1774445524044;" | python3 -c "
+import sys, re, html
+flds = sys.stdin.read().strip()
+if not flds:
+    print('❌ Card não encontrado ou vazio')
+    sys.exit()
+# \x1f é o separador oficial de campos do Anki
+fields = flds.split('\x1f')
+front = fields[0]  # 99% dos decks usam o 1º campo como frente
+# Remove tags HTML e decodifica &nbsp; etc.
+clean = re.sub(r'<[^>]+>', '', front).strip()
+print(f'📖 FRENTE: {html.unescape(clean) if clean else \"(campo vazio)\"}')
+"
