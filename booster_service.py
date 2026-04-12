@@ -260,6 +260,10 @@ class App:
                     log(f"⏸️ Booster {'PAUSADO' if self.paused else 'RETOMADO'}!", "WARN" if self.paused else "OK")
                     conn.sendall(estado.encode())
 
+                elif cmd == "GET_CONFIG":
+                    conn.sendall(json.dumps(self.config).encode())
+                    log("⬆️ Config enviada via TCP (GET_CONFIG)", "INFO")
+
                 else:
                     conn.sendall(b"UNKNOWN_CMD")
     
@@ -304,9 +308,9 @@ class App:
         level = card.get("fav_level", 1) if starred else 1
         consecutive = card.get("fav_consecutive", 0) if starred else 0
         
-        front_wrapped = _wrap_html(card["front"], starred, level, consecutive)
-        back_wrapped = _wrap_html(card["back"], starred, level, consecutive)
-        self.bridge.show_card(front_wrapped, back_wrapped, lambda l: self.process_card(card, l, favs_set))
+        front_wrapped = _wrap_html(card["front"], starred, level, consecutive, self.config)
+        back_wrapped = _wrap_html(card["back"], starred, level, consecutive, self.config)
+        self.bridge.show_card(front_wrapped, back_wrapped, lambda l: self.process_card(card, l))
 
     # ───────────────── CARD PROCESSOR ─────────────────
     def process_card(self, card: dict, level: str, favs_set: set = None):
