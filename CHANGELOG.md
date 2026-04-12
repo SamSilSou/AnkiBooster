@@ -5,7 +5,7 @@ Todas as mudanças notáveis neste projeto serão documentadas neste arquivo.
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/),
 e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
-## [0.2] - 2026-04-12
+## [ V0.2 ] - 2026-04-12
 
 ### ✨ Novas Funcionalidades
 - **🌙 Botão Snooze**: Adia o card atual por 1h sem penalizar o SRS, remover do buffer ou resetar streak. Volta automaticamente quando o tempo vence.
@@ -40,7 +40,14 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 --- 
 
 
-## [0.1] - 2026-03-XX
+
+
+
+
+
+
+
+## [ V0.1 ] - 2026-03-28
 
 ### 🚀 Lançamento Inicial (MVP)
 Primeira versão funcional do Anki Booster. Foco absoluto no motor de repetição espaçada (SRS), na leitura direta do banco do Anki e na estabilidade do serviço. Interface mínima e estática, sem recursos visuais ou interações avançadas.
