@@ -92,7 +92,7 @@ def make_slider(title, emoji, min_v, max_v, step, value, desc):
     return box, slider
 
 def open_config():
-    # 🌐 Busca config diretamente do Booster
+    # Busca config diretamente do Booster, caso não encontre retorna booster desconectado
     cfg = fetch_config()
     if cfg is None:
         QMessageBox.warning(mw, "Booster Offline", 
@@ -130,7 +130,7 @@ def open_config():
 
     layout.addWidget(QFrame(frameShape=QFrame.Shape.HLine))
 
-    # 🈶 CHECKBOX FURIGANA HOVER
+    # CHECKBOX FURIGANA HOVER, um sistema que esconde o Ruby pra forçar memorização
     furigana_cb = QCheckBox("🈶 Ocultar furigana (RUBY) até passar o mouse")
     furigana_cb.setChecked(cfg.get("HIDE_FURIGANA_ON_HOVER", False))
     furigana_cb.setStyleSheet("font-size: 13px; padding: 4px 0;")
@@ -154,7 +154,7 @@ def open_config():
         sliders[key] = s
         layout.addLayout(box)
 
-    # 🔥 REVLOG TYPES
+    # REVLOG TYPES: tipos de estado de aprendizado para serem considerados no revlog
     types_box = QVBoxLayout()
     types_box.addWidget(QLabel("🧠 <b>Tipos de revisão</b>"))
 
@@ -185,7 +185,7 @@ def open_config():
     feedback_label = QLabel("")
     layout.addWidget(feedback_label)
 
-    # 🔌 Botão Pausar/Retomar
+    # Botão Pausar/Retomar
     btn_pause = QPushButton("⏸️ Pausar Booster")
     btn_pause.setStyleSheet("background-color: #f39c12; color: white; font-weight: bold; padding: 8px;")
 
@@ -251,6 +251,6 @@ def init_menu():
     action.triggered.connect(open_config)
     mw.form.menuTools.addAction(action)
 
-# ❌ Removido: gui_hooks.profile_will_close.append(...)
-# Motivo: Não há mais arquivo local para sincronizar no fechamento.
+# Removido: gui_hooks.profile_will_close.append(...)
+# Motivo: Não há mais arquivo local para sincronizar no fechamento, então achei que era codigo inutil, se eu voltar atrás o coloce de volta
 init_menu()

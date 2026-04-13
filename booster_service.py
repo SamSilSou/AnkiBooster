@@ -121,7 +121,7 @@ class App:
             log("❌ Falha ao carregar theme.qml", "ERR")
             sys.exit(1)
         
-        # 🔒 Configura janela
+        # Configura janela
         root = self.engine.rootObjects()[0]
         root.setMinimumWidth(440)
         root.setMaximumWidth(440)
@@ -134,7 +134,7 @@ class App:
             | Qt.WindowType.WindowStaysOnTopHint
         )
 
-        # 🔍 Debug config
+        # Debug config
         log(f"🔍 CONFIG_FILE: {CONFIG_FILE}", "INFO")
         if os.path.exists(CONFIG_FILE):
             try:
@@ -223,16 +223,16 @@ class App:
                     self.config = load_config()
                     self._apply_config_globals()
                     
-                    # 🔍 DEBUG: Log de carregamento de cards
+                    # DEBUG: Log de carregamento de cards
                     log(f"🔍 Carregando cards do Anki (LIMIT_CARDS={LIMIT_CARDS}, FAVS_PRIORITY={FAVS_PRIORITY})...", "INFO")
                     self.cards = load_cards_from_anki(self.config, self.state, self.daily)
                     
                     if self.cards:
-                        # 🔍 DEBUG: Resumo dos cards carregados
+                        # DEBUG: Resumo dos cards carregados
                         favs_in_cards = [c for c in self.cards if str(c["id"]) in get_all_favs()]
                         log(f"✅ {len(self.cards)} cards carregados | {len(favs_in_cards)} são favoritos", "OK")
                         
-                        # 🔍 DEBUG: Lista favoritos que NÃO foram carregados (se houver)
+                        # DEBUG: Lista favoritos que NÃO foram carregados (se houver)
                         all_favs = get_all_favs()
                         loaded_fav_ids = {str(c["id"]) for c in self.cards if str(c["id"]) in all_favs}
                         filtered_favs = [f for f in all_favs if f not in loaded_fav_ids]
@@ -335,7 +335,7 @@ class App:
         self.pool_cards = self.pool_cards[BUFFER_SIZE:]
         log(f"📦 Buffer {len(self.active_cards)} | Pool {len(self.pool_cards)}")
         
-        # 🔍 DEBUG: Mostra IDs no buffer ativo
+        # DEBUG: Mostra IDs no buffer ativo
         if self.active_cards:
             active_ids = [str(c["id"]) for c in self.active_cards]
             log(f"🔍 Buffer ativo: {active_ids[:3]}{'...' if len(active_ids)>3 else ''}", "INFO")
@@ -354,7 +354,7 @@ class App:
             
         available_cards = [c for c in self.active_cards if c.get("next_due", 0) <= now]
         
-        # 🔍 DEBUG: Por que nenhum card disponível?
+        # Debug: Por que nenhum card disponível?
         if not available_cards and self.active_cards:
             blocked = [c for c in self.active_cards if c.get("next_due", 0) > now]
             log(f"⚠️ {len(blocked)}/{len(self.active_cards)} cards bloqueados por next_due", "WARN")

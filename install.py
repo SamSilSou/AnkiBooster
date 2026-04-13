@@ -12,11 +12,20 @@ APP_NAME = "Anki_Booster"
 DATA_FOLDER = "anki_booster"
 CONFIG_FILE = os.path.join(DATA_FOLDER, "anki_booster_config.json")
 
+# ───────────────── CONFIG PADRÃO ─────────────────
 DEFAULT_CONFIG = {
-    "LIMIT_CARDS": 200, "GLOBAL_CORRECT": 1200, "GLOBAL_WRONG": 300,
-    "MAX_DAILY": 3, "BUFFER_SIZE": 5, "FAVS_PRIORITY": 3, "REVLOG_DAYS": 3,
-    "TRANSLATE_ENABLED": False, "TRANSLATE_LANG": "pt",
-    "TRANSLATE_PROVIDER": "libretranslate", "TRANSLATE_API_KEY": ""
+    "GLOBAL_CORRECT": 1200,
+    "GLOBAL_WRONG": 300,
+    "BUFFER_SIZE": 5,
+    "MAX_DAILY": 3,
+    "REVLOG_DAYS": 3,
+    "LIMIT_CARDS": 200,
+    "FAVS_PRIORITY": 3,
+    "REVLOG_TYPES": [0, 1, 2, 3],
+    "FRONT_FIELDS": None,
+    "BACK_FIELDS": None,
+    "MIN_CARD_DELAY": 20,
+    "HIDE_FURIGANA_ON_HOVER": False  # Oculta furigana até passar o mouse sobre a palavra no popup
 }
 
 def log(msg, status="ℹ️"):

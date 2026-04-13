@@ -48,7 +48,7 @@ def enable_windows(python_exe, service_script):
     startup.mkdir(parents=True, exist_ok=True)
     vbs = startup / "anki_booster.vbs"
     
-    # 🔧 Template do VBS com placeholders {script_path} e {python_exe}
+    # Template do VBS com placeholders {script_path} e {python_exe}, responsavel por reiniciar o serviço 
     vbs_template = '''\
 ' anki_booster.vbs - Autostart silencioso (gerado automaticamente)
 Dim fso, shell, scriptPath, scriptDir
@@ -70,7 +70,7 @@ Do
 Loop
 '''
     
-    # 🔧 Injeta os caminhos reais usando .format() (evita conflito de aspas)
+    #  Injeta os caminhos reais usando .format() (evita conflito de aspas)
     vbs_content = vbs_template.format(
         script_path=service_script,
         python_exe=python_exe
