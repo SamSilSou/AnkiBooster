@@ -73,7 +73,8 @@ def main():
     # 2. Arquivos/Pastas para copiar
     items_to_copy = [
         "booster_service.py", "booster_utils.py", "theme.qml",
-        "autostart.py", "anki_booster.vbs", "requirements.txt", "anki_extension"
+        "autostart.py", "anki_booster.vbs", "requirements.txt", "anki_extension",
+        "sounds"
     ]
     
     copied = 0
@@ -100,9 +101,13 @@ def main():
     data_dir.mkdir(exist_ok=True)
     log(f"✅ Pasta de dados criada: {DATA_FOLDER}", "🟢")
 
-    # 4. Config padrão
+    # 4. Config padrão (com log de debug)
     config_path = dst_dir / CONFIG_FILE
-    if not config_path.exists():
+    log(f"🔍 Verificando config em: {config_path}", "🔸")
+    
+    if config_path.exists():
+        log(f"✅ Config existente encontrada ({config_path.stat().st_size} bytes) → MANTIDA", "🟢")
+    else:
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(DEFAULT_CONFIG, f, indent=2, ensure_ascii=False)
         log("⚙️  Config padrão gerada", "🟢")
