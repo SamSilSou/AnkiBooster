@@ -50,8 +50,7 @@ DEFAULT_CONFIG = {
     "REVLOG_TYPES": [0, 1, 2, 3],
     "FRONT_FIELDS": None,
     "BACK_FIELDS": None,
-    "MIN_CARD_DELAY": 20,
-    "HIDE_FURIGANA_ON_HOVER": False  # Oculta furigana até hover no popup
+    "MIN_CARD_DELAY": 20
 }
 
 def load_config() -> Dict[str, Any]:
@@ -176,7 +175,7 @@ def is_anki_closed() -> bool:
         return False
 
 # ───────────────── HTML WRAPPER ─────────────────
-def _wrap_html(content: str, starred: bool = False, level: int = 1, consecutive: int = 0, config: dict = None) -> str:
+def _wrap_html(content: str, starred: bool = False, level: int = 1, consecutive: int = 0) -> str:
     """Envolve o conteúdo do card com CSS e indicadores de favorito"""
     star_html = "⭐" if starred else ""
     level_html = f" <span style='font-size:12px;color:#ffd700'>[N{level}: {consecutive}/{_get_fav_level_max(level)}]</span>" if starred else ""
@@ -193,31 +192,9 @@ def _wrap_html(content: str, starred: bool = False, level: int = 1, consecutive:
         ::-webkit-scrollbar-track { display: none !important; }
     </style>
     """
-
-    # CSS Furigana Hover (injetado no popup se ativado)
-    furigana_css = ""
-    if config and config.get("HIDE_FURIGANA_ON_HOVER"):
-        furigana_css = """
-        <style>
-        @media (hover: hover) {
-            ruby rt {
-                opacity: 0;
-                transition: opacity 0.2s ease;
-                pointer-events: none;
-            }
-            ruby:hover rt {
-                opacity: 1;
-            }
-        }
-        @media (hover: none) {
-            ruby rt { opacity: 1 !important; }
-        }
-        </style>
-        """
     
     return f"""
     {hide_scrollbar_css}
-    {furigana_css}
     <div style="text-align:center;line-height:1.5;padding:10px;min-height:100vh;display:flex;align-items:center;justify-content:center;box-sizing:border-box;">
         <div style="position:absolute;top:8px;right:12px;font-size:20px;filter:drop-shadow(0 0 4px gold);">
             {star_html}{level_html}

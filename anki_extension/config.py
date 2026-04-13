@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
-"""
-Anki Booster Addon - Config UI via TCP
-Sem arquivo local. Lê/salva direto no serviço principal.
-"""
 from aqt import mw, gui_hooks
 from aqt.qt import *
-import json, socket
+import json, os, socket
+from pathlib import Path
 
-CMD_PORT = 8894
-BOOSTER_ADDR = ("127.0.0.1", CMD_PORT)
+# Caminho LOCAL da extensão
+CONFIG_PATH = Path(__file__).parent / "booster_config.json"
+CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-# 🔧 Defaults apenas para UI/fallback (não são salvos em disco)
-DEFAULTS = {
+# Configurações padrão
+DEFAULT_CONFIG = {
     "GLOBAL_CORRECT": 1200,
     "GLOBAL_WRONG": 300,
     "BUFFER_SIZE": 5,
@@ -19,50 +17,56 @@ DEFAULTS = {
     "REVLOG_DAYS": 3,
     "LIMIT_CARDS": 200,
     "FAVS_PRIORITY": 3,
-    "REVLOG_TYPES": [0,1,2,3],
-    "HIDE_FURIGANA_ON_HOVER": False
+    "REVLOG_TYPES": [0,1,2,3]  # 🔥 NOVO
 }
 
-# ───────────────── TCP HELPERS ─────────────────
-def tcp_request(cmd: str) -> str | None:
-    """Envia comando TCP e retorna resposta completa"""
+CMD_PORT = 8894
+
+def load_config():
+    if CONFIG_PATH.exists():
+        try:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                return {**DEFAULT_CONFIG, **json.load(f)}
+        except Exception as e:
+            print(f"⚠️ Erro ao carregar config: {e}")
+    return DEFAULT_CONFIG.copy()
+
+def save_config(cfg):
     try:
-        with socket.create_connection(BOOSTER_ADDR, timeout=2) as s:
-            s.sendall(cmd.encode())
-            data = b""
-            while True:
-                chunk = s.recv(4096)
-                if not chunk: break
-                data += chunk
-                if len(chunk) < 4096: break
-            return data.decode()
+        with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        print(f"❌ Erro ao salvar config: {e}")
+        return False
+
+def check_booster_connection():
+    try:
+        with socket.create_connection(("127.0.0.1", CMD_PORT), timeout=1):
+            return True
+    except:
+        return False
+
+def send_config_to_booster(cfg):
+    try:
+        with socket.create_connection(("127.0.0.1", CMD_PORT), timeout=2) as s:
+            payload = json.dumps(cfg, separators=(',', ':'))
+            s.sendall(f"SAVE_CONFIG:{payload}".encode())
+            response = s.recv(1024).decode()
+            return response == "OK"
+    except Exception as e:
+        print(f"[Booster] ⚠️ Falha ao enviar config: {e}")
+        return False
+
+def send_toggle_pause_to_booster():
+    try:
+        with socket.create_connection(("127.0.0.1", CMD_PORT), timeout=2) as s:
+            s.sendall(b"TOGGLE_PAUSE")
+            return s.recv(1024).decode()
     except:
         return None
 
-def fetch_config():
-    """Busca config atual do Booster via TCP"""
-    res = tcp_request("GET_CONFIG")
-    if res:
-        try: return {**DEFAULTS, **json.loads(res)}
-        except: pass
-    return None
 
-def push_config(cfg: dict) -> bool:
-    """Envia config completa para o Booster"""
-    payload = json.dumps(cfg, separators=(',', ':'))
-    return tcp_request(f"SAVE_CONFIG:{payload}") == "OK"
-
-def toggle_pause_cmd() -> str | None:
-    """Envia comando de pause/resume"""
-    return tcp_request("TOGGLE_PAUSE")
-
-def check_booster_connection() -> bool:
-    """Verifica apenas se a porta está aberta"""
-    try:
-        with socket.create_connection(BOOSTER_ADDR, timeout=1): return True
-    except: return False
-
-# ───────────────── UI COMPONENTS ─────────────────
 def make_slider(title, emoji, min_v, max_v, step, value, desc):
     box = QVBoxLayout()
     label = QLabel(f"{emoji} <b>{title}</b>")
@@ -89,17 +93,11 @@ def make_slider(title, emoji, min_v, max_v, step, value, desc):
 
     box.addLayout(row)
     box.addWidget(desc_label)
+
     return box, slider
 
 def open_config():
-    # 🌐 Busca config diretamente do Booster
-    cfg = fetch_config()
-    if cfg is None:
-        QMessageBox.warning(mw, "Booster Offline", 
-            "⚠️ Não foi possível conectar ao serviço.\n"
-            "Inicie o Anki Booster antes de abrir as configurações.")
-        return
-
+    cfg = load_config()
     d = QDialog(mw)
     d.setWindowTitle("⚙️ Booster Config 🔥")
     d.setMinimumWidth(450)
@@ -109,8 +107,7 @@ def open_config():
 
     # Status
     status_box = QHBoxLayout()
-    status_label = QLabel("🟢 Booster conectado")
-    status_label.setStyleSheet("color: green; font-weight: bold;")
+    status_label = QLabel("Verificando...")
     btn_refresh = QPushButton("🔄")
     btn_refresh.setFixedWidth(40)
 
@@ -130,14 +127,6 @@ def open_config():
 
     layout.addWidget(QFrame(frameShape=QFrame.Shape.HLine))
 
-    # 🈶 CHECKBOX FURIGANA HOVER
-    furigana_cb = QCheckBox("🈶 Ocultar furigana (RUBY) até passar o mouse")
-    furigana_cb.setChecked(cfg.get("HIDE_FURIGANA_ON_HOVER", False))
-    furigana_cb.setStyleSheet("font-size: 13px; padding: 4px 0;")
-    layout.addWidget(furigana_cb)
-
-    layout.addWidget(QFrame(frameShape=QFrame.Shape.HLine))
-
     # Sliders
     sliders_list = [
         ("FAVS_PRIORITY", "Prioridade dos favoritos", "⭐", 1, 10, 1, "Quanto maior, mais favoritos aparecem"),
@@ -154,7 +143,7 @@ def open_config():
         sliders[key] = s
         layout.addLayout(box)
 
-    # 🔥 REVLOG TYPES
+    # REVLOG TYPES: tipos de estado de aprendizado a serem considerados do revlog
     types_box = QVBoxLayout()
     types_box.addWidget(QLabel("🧠 <b>Tipos de revisão</b>"))
 
@@ -185,7 +174,9 @@ def open_config():
     feedback_label = QLabel("")
     layout.addWidget(feedback_label)
 
-    # 🔌 Botão Pausar/Retomar
+    # Botões
+
+    # Botão Pausar/Retomar
     btn_pause = QPushButton("⏸️ Pausar Booster")
     btn_pause.setStyleSheet("background-color: #f39c12; color: white; font-weight: bold; padding: 8px;")
 
@@ -193,7 +184,7 @@ def open_config():
         if not check_booster_connection():
             feedback_label.setText("❌ Booster offline")
             return
-        state = toggle_pause_cmd()
+        state = send_toggle_pause_to_booster()
         if state == "PAUSED":
             btn_pause.setText("▶️ Retomar Booster")
             btn_pause.setStyleSheet("background-color: #2ecc71; color: white; font-weight: bold; padding: 8px;")
@@ -210,29 +201,37 @@ def open_config():
     layout.addWidget(btn_pause)
     layout.addWidget(QFrame(frameShape=QFrame.Shape.HLine))
 
-    # Botões Salvar/Reset
     btn_row = QHBoxLayout()
     btn_save = QPushButton("💾 Salvar")
     btn_reset = QPushButton("♻️ Resetar")
 
     def save():
         new_cfg = {k: sliders[k].value() for k in sliders}
-        selected_types = [t for t, cb in type_checkboxes.items() if cb.isChecked()]
-        new_cfg["REVLOG_TYPES"] = selected_types if selected_types else [0,1,2,3]
-        new_cfg["HIDE_FURIGANA_ON_HOVER"] = furigana_cb.isChecked()
 
-        if push_config(new_cfg):
-            feedback_label.setText("✅ Sincronizado com o Booster")
-            QTimer.singleShot(1000, d.accept)
+        selected_types = [t for t, cb in type_checkboxes.items() if cb.isChecked()]
+        if not selected_types:
+            selected_types = [0,1,2,3]
+
+        new_cfg["REVLOG_TYPES"] = selected_types
+
+        if not save_config(new_cfg):
+            feedback_label.setText("❌ Erro ao salvar")
+            return
+
+        if send_config_to_booster(new_cfg):
+            feedback_label.setText("✅ Sincronizado")
         else:
-            feedback_label.setText("❌ Falha ao salvar. Verifique se o Booster está rodando.")
+            feedback_label.setText("⚠️ Booster offline")
+
+        QTimer.singleShot(1500, d.accept)
 
     def reset():
         for k in sliders:
-            sliders[k].setValue(DEFAULTS[k])
+            sliders[k].setValue(DEFAULT_CONFIG[k])
+
         for t, cb in type_checkboxes.items():
-            cb.setChecked(t in DEFAULTS["REVLOG_TYPES"])
-        furigana_cb.setChecked(DEFAULTS["HIDE_FURIGANA_ON_HOVER"])
+            cb.setChecked(t in DEFAULT_CONFIG["REVLOG_TYPES"])
+
         feedback_label.setText("♻️ Resetado (salve para aplicar)")
 
     btn_save.clicked.connect(save)
@@ -245,12 +244,15 @@ def open_config():
     d.setLayout(layout)
     d.exec()
 
-# ───────────────── INIT ─────────────────
+def on_profile_will_close():
+    cfg = load_config()
+    if check_booster_connection():
+        send_config_to_booster(cfg)
+
 def init_menu():
-    action = QAction("🚀 Booster Config ⚙️", mw)
+    action = QAction("Booster Config ⚙️", mw)
     action.triggered.connect(open_config)
     mw.form.menuTools.addAction(action)
 
-# ❌ Removido: gui_hooks.profile_will_close.append(...)
-# Motivo: Não há mais arquivo local para sincronizar no fechamento.
+gui_hooks.profile_will_close.append(on_profile_will_close)
 init_menu()
