@@ -3,10 +3,11 @@
 🚀 Anki Booster - Serviço Principal
 Lógica de UI, TCP, loop e processamento de cards.
 """
-import sys, os, time, socket, datetime, json, threading
-from PyQt6.QtWidgets import QApplication
+import sys, os, time, socket, datetime, json, threading, subprocess, platform
+from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PyQt6.QtQml import QQmlApplicationEngine
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot, QUrl, QTimer, QSize, Qt
+from PyQt6.QtGui import QIcon
 
 # Imports dos utilitários
 from booster_utils import (
@@ -44,6 +45,7 @@ class Bridge(QObject):
     
     @pyqtSlot()
     def onShowAnswerClicked(self):
+        log("[DEBUG] onShowAnswerClicked CHAMADO", "INFO")
         if self.back_html:
             self.show.emit(self.back_html)
     
@@ -58,6 +60,7 @@ class Bridge(QObject):
     
     @pyqtSlot()
     def toggleFullscreen(self):
+        log("[DEBUG] toggleFullscreen CHAMADO", "INFO")
         if self.app:
             self.app.toggle_fullscreen()
     
@@ -65,6 +68,12 @@ class Bridge(QObject):
     def snoozeCard(self):
         if self.app:
             self.app.snooze_current_card()
+    
+    @pyqtSlot(int)  # 🆕 Recebe minutos personalizados do QML
+    def snoozeWithMinutes(self, minutes: int):
+        """Recebe tempo de snooze do QML e chama backend"""
+        if self.app:
+            self.app.snooze_current_card(minutes)
     
     def _send_answer(self, level: str):
         if self.pending_callback:
@@ -129,9 +138,10 @@ class App:
         root.setMaximumHeight(320)
         root.setSizeIncrement(QSize(0, 0))
         root.setFlags(
-            Qt.WindowType.Window
+            Qt.WindowType.Tool
             | Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.BypassWindowManagerHint 
         )
 
         # Debug config
@@ -145,6 +155,9 @@ class App:
                 log(f"⚠️ Não foi possível ler config: {e}", "WARN")
         else:
             log(f"⚠️ Arquivo de config NÃO existe ainda", "WARN")
+
+        # 📍 System Tray (inicializa após a UI estar pronta)
+        self._setup_tray_icon()
 
         # Inicia threads
         threading.Thread(target=self.tcp_listener, daemon=True).start()
@@ -167,16 +180,93 @@ class App:
         REVLOG_TYPES = self.config.get("REVLOG_TYPES", [0, 1, 2, 3])
         FAV_BONUS = FAVS_PRIORITY
     
+    # ───────────────── SYSTEM TRAY ─────────────────
+    def _setup_tray_icon(self):
+        """Cria ícone na tray com menu dinâmico"""
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            log("ℹ️ System tray não disponível (ignorado)", "INFO")
+            return
+
+        # Ícone: tenta arquivo local ou fallback do tema
+        icon_path = os.path.join(SCRIPT_DIR, "icon.png")
+        icon = QIcon(icon_path) if os.path.exists(icon_path) else QIcon.fromTheme("anki", QIcon.fromTheme("system-run"))
+        
+        self.tray_icon = QSystemTrayIcon(icon)
+        self.tray_icon.setToolTip("Anki Booster")
+        self.tray_icon.activated.connect(self._tray_activated)
+        self._build_tray_menu()
+        self.tray_icon.show()
+        log("📍 Ícone de tray ativado", "OK")
+
+    def _build_tray_menu(self):
+        """Monta o menu conforme o estado atual"""
+        menu = QMenu()
+        
+        if not self.allow_showing:
+            # 🟡 Nunca recebeu START → mostra "Iniciar"
+            menu.addAction("▶️ Iniciar Booster").triggered.connect(self._tray_start)
+        else:
+            # 🟢 Já rodando → mostra Pausar/Retomar
+            label = "⏸️ Pausar" if not self.paused else "▶️ Retomar"
+            menu.addAction(label).triggered.connect(self._tray_toggle_pause)
+        
+        menu.addSeparator()
+        menu.addAction("🚪 Sair").triggered.connect(QApplication.quit)
+        self.tray_icon.setContextMenu(menu)
+
+    def _tray_start(self):
+        """Simula o START via tray (recarrega cards e libera exibição)"""
+        today = str(datetime.date.today())
+        if self.daily.get("date") != today:
+            self.daily = {"date": today, "cards_today": {}}
+            save_json_file(DAILY_FILE, self.daily)
+        
+        self.config = load_config()
+        self._apply_config_globals()
+        self.cards = load_cards_from_anki(self.config, self.state, self.daily)
+        
+        if self.cards:
+            self.prepare_buffer()
+            self.allow_showing = True
+            log("▶️ Booster iniciado via Tray", "OK")
+        else:
+            log("⚠️ Nenhum card disponível para iniciar", "WARN")
+        
+        self._refresh_tray()
+
+    def _tray_toggle_pause(self):
+        """Alterna estado de pausa via tray"""
+        self.paused = not self.paused
+        self._refresh_tray()
+        log(f"⏸️ Booster {'PAUSADO' if self.paused else 'RETOMADO'} via Tray", "OK" if not self.paused else "WARN")
+
+    def _tray_activated(self, reason):
+        """Duplo clique na tray → toggle visibilidade da janela"""
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            root = self.engine.rootObjects()[0] if self.engine.rootObjects() else None
+            if root:
+                if root.isVisible():
+                    root.hide()
+                else:
+                    root.show()
+                    root.raise_()
+                    root.requestActivate()
+
+    def _refresh_tray(self):
+        """Reconstrói o menu da tray para refletir estado atual"""
+        if hasattr(self, 'tray_icon') and self.tray_icon:
+            self._build_tray_menu()
+    
     # ───────────────── SNOOZE UTILS ─────────────────
-    def snooze_current_card(self):
-        """Adia o card atual por 1 hora (sem remover do buffer ou mudar streak ou qualquer coisa sobre o card)"""
+    def snooze_current_card(self, minutes: int = 60):
+        """Adia o card atual por X minutos (padrão 60)"""
         if not self._current_card:
             log("⚠️ Nenhum card ativo para snooze", "WARN")
             return
         
         cid = str(self._current_card["id"])
         now = time.time()
-        snooze_delay = 3600
+        snooze_delay = minutes * 60
         
         self._current_card["next_due"] = now + snooze_delay
         self.state[cid] = self._current_card
@@ -185,12 +275,11 @@ class App:
         self.bridge.hide.emit()
         self.reviewing = False
         self._current_card = None
-        #self.next_global_show = now + self.config["GLOBAL_CORRECT"]
-        self.next_global_show = now # Força verificação imediata: snooze não deve atrasar o fluxo
+        self.next_global_show = now  # Força verificação imediata: fluxo contínuo
 
-        next_time = datetime.datetime.fromtimestamp(now + snooze_delay).strftime("%H:%M:%S")
-        log(f"🌙 Card {cid} adiado por 1h (volta às {next_time})", "OK")
-        #log("Ok, todos os snooze foram lidos")
+        next_time = datetime.datetime.fromtimestamp(now + snooze_delay).strftime("%H:%M")
+        log(f"🌙 Card {cid} adiado por {minutes}min (volta às {next_time})", "OK")
+        self._refresh_tray()
     
     # ───────────────── TCP LISTENER ─────────────────
     def tcp_listener(self):
@@ -319,6 +408,7 @@ class App:
                     estado = "PAUSED" if self.paused else "RUNNING"
                     log(f"⏸️ Booster {'PAUSADO' if self.paused else 'RETOMADO'}!", "WARN" if self.paused else "OK")
                     conn.sendall(estado.encode())
+                    self._refresh_tray()  # Atualiza menu da tray
 
                 elif cmd == "GET_CONFIG":
                     conn.sendall(json.dumps(self.config).encode())
@@ -494,7 +584,7 @@ class App:
         except StopIteration:
             pass
 
-        self.next_global_show = now + GLOBAL_CORRECT
+        self.next_global_show = min(now + GLOBAL_CORRECT, now + card_delay)
         next_hr = datetime.datetime.fromtimestamp(self.next_global_show).strftime("%H:%M:%S")
         log(f"⏳ Ritmo global: próximo card em {GLOBAL_CORRECT}s ({next_hr})")
         self.reviewing = False

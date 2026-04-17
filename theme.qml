@@ -27,11 +27,9 @@ Window {
         "accentText": "#561e16"
     }
 
-    // AJUSTE DE VOLUME E ESTADO DOS EFEITOS SONOROS DA INTERFACE
+    // Configuracao de sons
     property bool soundsEnabled: true
     property real soundVolume: 0.5
-    
-    // AQUI ESTÃO OS ARQUIVOS DE AUDIO USADOS, MODIFIQUE AQUI PRA USAR CUSTOMIZADOS
     property string soundClick: "sounds/Coffee2.wav"
     property string soundSoft: "sounds/Coffee2.wav"
     property string soundError: "sounds/Coffee1.wav"
@@ -44,12 +42,11 @@ Window {
     SoundEffect { id: sndWhoosh;source: soundWhoosh;volume: soundVolume; muted: !soundsEnabled }
     SoundEffect { id: sndPop;   source: soundPop;   volume: soundVolume; muted: !soundsEnabled }
 
-    // Timers para delay de 0.5s antes de chamar o bridge
+    // Timers para delay das respostas
     Timer { id: timerEasy; interval: 350; running: false; repeat: false; onTriggered: bridge.answerEasy() }
     Timer { id: timerOk; interval: 350; running: false; repeat: false; onTriggered: bridge.answerOk() }
     Timer { id: timerHard; interval: 350; running: false; repeat: false; onTriggered: bridge.answerHard() }
     Timer { id: timerFail; interval: 350; running: false; repeat: false; onTriggered: bridge.answerFail() }
-    Timer { id: timerSnooze; interval: 350; running: false; repeat: false; onTriggered: bridge.snoozeCard() }
 
     // Fullscreen Toggle
     MouseArea {
@@ -62,11 +59,8 @@ Window {
             rippleFS.start()
             bridge.toggleFullscreen()
         }
-        
         Item {
-            id: rippleFSContainer
-            anchors.centerIn: parent
-            width: 0; height: 0
+            id: rippleFSContainer; anchors.centerIn: parent; width: 0; height: 0
             Rectangle {
                 anchors.centerIn: parent
                 width: rippleFSContainer.width; height: rippleFSContainer.height
@@ -80,15 +74,9 @@ Window {
                 NumberAnimation { target: rippleFSContainer; property: "opacity"; from: 0.4; to: 0; duration: 400 }
             }
         }
-        
         Text {
-            id: fsIcon
-            anchors.centerIn: parent
-            text: "⛶"
-            font.pixelSize: 20
-            color: "white"
-            opacity: 0.5
-            scale: 1.0
+            id: fsIcon; anchors.centerIn: parent
+            text: "⛶"; font.pixelSize: 20; color: "white"; opacity: 0.5; scale: 1.0
             Behavior on opacity { PropertyAnimation { duration: 150 } }
             Behavior on scale { NumberAnimation { duration: 80 } }
         }
@@ -120,6 +108,8 @@ Window {
                 color: theme.surface
                 x: 0; opacity: 1; scale: 1.0
                 clip: true
+                implicitWidth: 416
+                implicitHeight: 250
 
                 WebEngineView {
                     id: webView
@@ -127,10 +117,199 @@ Window {
                     anchors.margins: 12
                     backgroundColor: "transparent"
                     clip: true
+                    settings.fullScreenSupportEnabled: false
+                    onFullScreenRequested: function(request) { request.reject() }
+                }
+
+                // OVERLAY DE SNOOZE
+                Rectangle {
+                    id: snoozeOverlay
+                    anchors.fill: parent
+                    radius: 16
+                    color: "#4a5568"
+                    opacity: 0
+                    visible: opacity > 0
+                    z: 100
+                    Behavior on opacity { NumberAnimation { duration: 200 } }
+
+                    ColumnLayout {
+                        anchors.centerIn: parent
+                        anchors.margins: 20
+                        spacing: 16
+                        width: parent.width * 0.9
+
+                        // Header
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+                            Text { text: "🌙"; font.pixelSize: 24 }
+                            Text {
+                                text: "Quanto tempo de soneca?"
+                                color: theme.text
+                                font.pixelSize: 16
+                                font.bold: true
+                                Layout.fillWidth: true
+                            }
+                            MouseArea {
+                                width: 28; height: 28
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    snoozeOverlay.opacity = 0
+                                    if (soundsEnabled) sndSoft.play()
+                                }
+                                Text {
+                                    text: "✖"
+                                    anchors.centerIn: parent
+                                    color: theme.text
+                                    font.pixelSize: 18
+                                    opacity: 0.7
+                                    Behavior on opacity { NumberAnimation { duration: 100 } }
+                                }
+                                onEntered: parent.opacity = 1.0
+                                onExited: parent.opacity = 0.7
+                            }
+                        }
+
+                        // Controles de tempo
+                        RowLayout {
+                            id: timeControls
+                            Layout.fillWidth: true
+                            spacing: 8
+                            property int minutes: 30
+
+                            Rectangle {
+                                Layout.preferredWidth: 48; height: 36; radius: 8; color: "#4a5568"
+                                Behavior on color { ColorAnimation { duration: 100 } }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    onEntered: parent.color = "#5a6578"
+                                    onExited: parent.color = "#4a5568"
+                                    onClicked: {
+                                        timeControls.minutes = Math.max(1, timeControls.minutes - 5)
+                                        if (soundsEnabled) sndClick.play()
+                                    }
+                                    Text { text: "-5m"; anchors.centerIn: parent; color: theme.text; font.pixelSize: 14; font.bold: true }
+                                }
+                            }
+                            Rectangle {
+                                Layout.preferredWidth: 48; height: 36; radius: 8; color: "#4a5568"
+                                Behavior on color { ColorAnimation { duration: 100 } }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    onEntered: parent.color = "#5a6578"
+                                    onExited: parent.color = "#4a5568"
+                                    onClicked: {
+                                        timeControls.minutes = Math.max(1, timeControls.minutes - 1)
+                                        if (soundsEnabled) sndClick.play()
+                                    }
+                                    Text { text: "-1m"; anchors.centerIn: parent; color: theme.text; font.pixelSize: 14; font.bold: true }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true; height: 36; radius: 8
+                                color: "#251b1a"
+                                border.color: theme.accent
+                                border.width: 2
+                                Text {
+                                    text: timeControls.minutes + " minutos"
+                                    anchors.centerIn: parent
+                                    color: theme.text
+                                    font.pixelSize: 15
+                                    font.bold: true
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.preferredWidth: 48; height: 36; radius: 8; color: "#4a5568"
+                                Behavior on color { ColorAnimation { duration: 100 } }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    onEntered: parent.color = "#5a6578"
+                                    onExited: parent.color = "#4a5568"
+                                    onClicked: {
+                                        timeControls.minutes = Math.min(120, timeControls.minutes + 1)
+                                        if (soundsEnabled) sndClick.play()
+                                    }
+                                    Text { text: "+1m"; anchors.centerIn: parent; color: theme.text; font.pixelSize: 14; font.bold: true }
+                                }
+                            }
+                            Rectangle {
+                                Layout.preferredWidth: 48; height: 36; radius: 8; color: "#4a5568"
+                                Behavior on color { ColorAnimation { duration: 100 } }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    onEntered: parent.color = "#5a6578"
+                                    onExited: parent.color = "#4a5568"
+                                    onClicked: {
+                                        timeControls.minutes = Math.min(120, timeControls.minutes + 5)
+                                        if (soundsEnabled) sndClick.play()
+                                    }
+                                    Text { text: "+5m"; anchors.centerIn: parent; color: theme.text; font.pixelSize: 14; font.bold: true }
+                                }
+                            }
+                        }
+
+                        // Botoes de acao
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            Rectangle {
+                                Layout.fillWidth: true; height: 40; radius: 10; color: "#4a5568"
+                                Behavior on color { ColorAnimation { duration: 100 } }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    onEntered: parent.color = "#5a6578"
+                                    onExited: parent.color = "#4a5568"
+                                    onClicked: {
+                                        snoozeOverlay.opacity = 0
+                                        if (soundsEnabled) sndSoft.play()
+                                    }
+                                    Text {
+                                        text: "Cancelar"
+                                        anchors.centerIn: parent
+                                        color: theme.text
+                                        font.bold: true
+                                        font.pixelSize: 14
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true; height: 40; radius: 10; color: theme.accent
+                                Behavior on color { ColorAnimation { duration: 100 } }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    onEntered: parent.color = "#ff9a8e"
+                                    onExited: parent.color = theme.accent
+                                    onClicked: {
+                                        var mins = timeControls.minutes
+                                        bridge.snoozeWithMinutes(mins)
+                                        snoozeOverlay.opacity = 0
+                                        if (soundsEnabled) sndWhoosh.play()
+                                    }
+                                    Text {
+                                        text: "Confirmar"
+                                        anchors.centerIn: parent
+                                        color: theme.accentText
+                                        font.bold: true
+                                        font.pixelSize: 14
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
-            // Botão Mostrar Resposta
+            // Botao Mostrar Resposta
             Rectangle {
                 id: showBtn
                 Layout.fillWidth: true
@@ -143,9 +322,7 @@ Window {
                 Behavior on color { ColorAnimation { duration: 120 } }
 
                 Item {
-                    id: rippleShow
-                    anchors.centerIn: parent
-                    width: 0; height: 0
+                    id: rippleShow; anchors.centerIn: parent; width: 0; height: 0
                     Rectangle {
                         anchors.centerIn: parent
                         width: rippleShow.width; height: rippleShow.height
@@ -164,16 +341,13 @@ Window {
                     hoverEnabled: true
                     onEntered: showBtn.scale = 1.02
                     onExited: showBtn.scale = 1.0
-                    onPressed: {
-                        showBtn.scale = 0.97
-                        rippleShowAnim.start()
-                    }
+                    onPressed: { showBtn.scale = 0.97; rippleShowAnim.start() }
                     onClicked: {
+                        mouse.accepted = true
                         if (soundsEnabled) sndPop.play()
                         revealAnim.start()
                     }
                 }
-
                 Text {
                     text: "Mostrar resposta 👀"
                     anchors.centerIn: parent
@@ -181,16 +355,10 @@ Window {
                     font.pixelSize: 15
                     font.bold: true
                 }
-
                 Text {
-                    id: feedbackShow
-                    visible: false
-                    anchors.centerIn: parent
-                    font.pixelSize: 24
-                    opacity: 0
+                    id: feedbackShow; visible: false; anchors.centerIn: parent; font.pixelSize: 24; opacity: 0
                     SequentialAnimation {
-                        id: fadeShowOut
-                        running: false
+                        id: fadeShowOut; running: false
                         PauseAnimation { duration: 200 }
                         NumberAnimation { target: feedbackShow; property: "opacity"; to: 0; duration: 150 }
                         PropertyAction { target: feedbackShow; property: "visible"; value: false }
@@ -198,7 +366,7 @@ Window {
                 }
             }
 
-            // Botões de Resposta + Snooze
+            // Botoes de Resposta + Snooze
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 10
@@ -215,17 +383,13 @@ Window {
                     Behavior on color { ColorAnimation { duration: 100 } }
 
                     SequentialAnimation on y {
-                        id: floatSnooze
-                        running: false
-                        loops: Animation.Infinite
+                        id: floatSnooze; running: false; loops: Animation.Infinite
                         NumberAnimation { duration: 700; easing.type: Easing.InOutQuad; to: -4 }
                         NumberAnimation { duration: 700; easing.type: Easing.InOutQuad; to: 0 }
                     }
 
                     Item {
-                        id: rippleSnooze
-                        anchors.centerIn: parent
-                        width: 0; height: 0
+                        id: rippleSnooze; anchors.centerIn: parent; width: 0; height: 0
                         Rectangle {
                             anchors.centerIn: parent
                             width: rippleSnooze.width; height: rippleSnooze.height
@@ -242,48 +406,15 @@ Window {
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
-                        onEntered: {
-                            snoozeBtn.scale = 1.03
-                            floatSnooze.running = true
-                        }
-                        onExited: {
-                            snoozeBtn.scale = 1.0
-                            floatSnooze.running = false
-                            snoozeBtn.y = 0
-                        }
-                        onPressed: {
-                            snoozeBtn.scale = 0.95
-                            rippleSnoozeAnim.start()
-                        }
+                        onEntered: { snoozeBtn.scale = 1.03; floatSnooze.running = true }
+                        onExited: { snoozeBtn.scale = 1.0; floatSnooze.running = false; snoozeBtn.y = 0 }
+                        onPressed: { snoozeBtn.scale = 0.95; rippleSnoozeAnim.start() }
                         onClicked: {
-                            snoozeBtn.color = "#718096"
-                            feedbackSnooze.text = "🌙"
-                            feedbackSnooze.opacity = 1
-                            feedbackSnooze.visible = true
-                            fadeSnoozeOut.start()
-                            if (soundsEnabled) sndWhoosh.play()
-                            timerSnooze.start()
+                            snoozeOverlay.opacity = 1
+                            if (soundsEnabled) sndClick.play()
                         }
                     }
-
                     Text { text: "🌙"; anchors.centerIn: parent; font.pixelSize: 20; color: theme.text; opacity: 0.9 }
-                    Text {
-                        id: feedbackSnooze; visible: false; anchors.centerIn: parent; font.pixelSize: 26; opacity: 0; z: 10
-                        SequentialAnimation {
-                            id: fadeSnoozeOut; running: false
-                            PropertyAction { target: feedbackSnooze; property: "visible"; value: true }
-                            ParallelAnimation {
-                                NumberAnimation { target: feedbackSnooze; property: "opacity"; from: 0; to: 1; duration: 80 }
-                                NumberAnimation { target: feedbackSnooze; property: "y"; from: 0; to: -35; duration: 350; easing.type: Easing.OutQuad }
-                                NumberAnimation { target: feedbackSnooze; property: "scale"; from: 1; to: 1.6; duration: 350 }
-                            }
-                            PauseAnimation { duration: 150 }
-                            NumberAnimation { target: feedbackSnooze; property: "opacity"; to: 0; duration: 200 }
-                            PropertyAction { target: feedbackSnooze; property: "visible"; value: false }
-                            PropertyAction { target: feedbackSnooze; property: "y"; value: 0 }
-                            PropertyAction { target: feedbackSnooze; property: "scale"; value: 1 }
-                        }
-                    }
                 }
 
                 Repeater {
@@ -293,7 +424,6 @@ Window {
                         { label: "Difícil 😢", color: "#ffcc80", press: "#ffb74d", emoji: "💪", dir: -1, txt: "black" },
                         { label: "Errei 💀", color: "#ff6b6b", press: "#d64a4a", emoji: "🔄", dir: -1, txt: "white" }
                     ]
-
                     delegate: Rectangle {
                         id: ansBtn
                         Layout.fillWidth: true
@@ -306,17 +436,13 @@ Window {
                         Behavior on scale { NumberAnimation { duration: 80; easing.type: Easing.OutQuad } }
 
                         SequentialAnimation on y {
-                            id: floatAnim
-                            running: false
-                            loops: Animation.Infinite
+                            id: floatAnim; running: false; loops: Animation.Infinite
                             NumberAnimation { duration: 650; easing.type: Easing.InOutQuad; to: -3 }
                             NumberAnimation { duration: 650; easing.type: Easing.InOutQuad; to: 0 }
                         }
 
                         Item {
-                            id: rippleAns
-                            anchors.centerIn: parent
-                            width: 0; height: 0
+                            id: rippleAns; anchors.centerIn: parent; width: 0; height: 0
                             Rectangle {
                                 anchors.centerIn: parent
                                 width: rippleAns.width; height: rippleAns.height
@@ -333,15 +459,8 @@ Window {
                         MouseArea {
                             anchors.fill: parent
                             hoverEnabled: true
-                            onEntered: {
-                                ansBtn.scale = 1.03
-                                floatAnim.running = true
-                            }
-                            onExited: {
-                                ansBtn.scale = 1.0
-                                floatAnim.running = false
-                                ansBtn.y = 0
-                            }
+                            onEntered: { ansBtn.scale = 1.03; floatAnim.running = true }
+                            onExited: { ansBtn.scale = 1.0; floatAnim.running = false; ansBtn.y = 0 }
                             onPressed: {
                                 ansBtn.scale = 0.95
                                 ansBtn.color = modelData.press
@@ -353,41 +472,21 @@ Window {
                             onReleased: ansBtn.color = modelData.color
                             onClicked: {
                                 root.slideDirection = modelData.dir
-                                
-                                // Wobble ao clicar em Errei
                                 if (index === 3) wobbleAnim.start()
-                                
-                                // Sons
                                 if (soundsEnabled) {
                                     if (index <= 1) sndClick.play()
                                     else if (index === 2) sndSoft.play()
                                     else sndError.play()
                                 }
-                                
-                                // Delay de 0.5s antes de processar
                                 if (index === 0) timerEasy.start()
                                 else if (index === 1) timerOk.start()
                                 else if (index === 2) timerHard.start()
                                 else timerFail.start()
                             }
                         }
-
-                        Text { 
-                            text: modelData.label
-                            anchors.centerIn: parent 
-                            color: modelData.txt || "black"
-                            font.bold: true
-                            font.pixelSize: 14
-                            Behavior on opacity { NumberAnimation { duration: 100 } }
-                        }
-                        
+                        Text { text: modelData.label; anchors.centerIn: parent; color: modelData.txt || "black"; font.bold: true; font.pixelSize: 14 }
                         Text {
-                            id: feedbackTxt
-                            visible: false
-                            anchors.centerIn: parent
-                            font.pixelSize: 26
-                            opacity: 0
-                            z: 10
+                            id: feedbackTxt; visible: false; anchors.centerIn: parent; font.pixelSize: 26; opacity: 0; z: 10
                             SequentialAnimation {
                                 id: feedbackAnim; running: false
                                 PropertyAction { target: feedbackTxt; property: "visible"; value: true }
@@ -411,8 +510,7 @@ Window {
 
     // Wobble animation
     SequentialAnimation {
-        id: wobbleAnim
-        running: false
+        id: wobbleAnim; running: false
         NumberAnimation { target: cardContainer; property: "rotation"; to: -4; duration: 60; easing.type: Easing.OutQuad }
         NumberAnimation { target: cardContainer; property: "rotation"; to: 4; duration: 100; easing.type: Easing.InOutQuad }
         NumberAnimation { target: cardContainer; property: "rotation"; to: -3; duration: 100 }
@@ -436,13 +534,10 @@ Window {
         NumberAnimation { target: cardContainer; property: "scale"; from: 0.94; to: 1.0; duration: 220; easing.type: Easing.OutBack }
     }
 
-    // Reveal animation rapida
+    // Reveal animation
     SequentialAnimation {
         id: revealAnim
-        NumberAnimation { 
-            target: cardContainer; property: "scale"
-            to: 0.96; duration: 60; easing.type: Easing.InQuad 
-        }
+        NumberAnimation { target: cardContainer; property: "scale"; to: 0.96; duration: 60; easing.type: Easing.InQuad }
         ScriptAction {
             script: {
                 bridge.onShowAnswerClicked()
@@ -452,14 +547,8 @@ Window {
                 fadeShowOut.start()
             }
         }
-        NumberAnimation { 
-            target: cardContainer; property: "scale"
-            to: 1.03; duration: 100; easing.type: Easing.OutBack 
-        }
-        NumberAnimation { 
-            target: cardContainer; property: "scale"
-            to: 1.0; duration: 80; easing.type: Easing.OutQuad 
-        }
+        NumberAnimation { target: cardContainer; property: "scale"; to: 1.03; duration: 100; easing.type: Easing.OutBack }
+        NumberAnimation { target: cardContainer; property: "scale"; to: 1.0; duration: 80; easing.type: Easing.OutQuad }
     }
 
     // Conexoes com Python
@@ -502,7 +591,6 @@ Window {
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: 200 } }
     }
-
     onActiveChanged: {
         if (active && visible) {
             focusGlow.opacity = 0.3

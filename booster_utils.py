@@ -228,6 +228,7 @@ def _wrap_html(content: str, starred: bool = False, level: int = 1, consecutive:
     </div>
     """
 
+
 def _get_fav_level_max(level: int) -> int:
     """Retorna o número de acertos necessários para o nível de favorito"""
     return {1: 5, 2: 3, 3: 2}.get(level, 5)

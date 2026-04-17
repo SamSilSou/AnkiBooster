@@ -12,6 +12,7 @@ def get_paths():
     return python_exe, service_script
 
 # ───────────────── LINUX (systemd --user) ─────────────────
+# ───────────────── LINUX (systemd --user) ─────────────────
 def enable_linux(python_exe, service_script):
     service_dir = Path.home() / ".config" / "systemd" / "user"
     service_dir.mkdir(parents=True, exist_ok=True)
@@ -26,6 +27,9 @@ Type=simple
 ExecStart="{python_exe}" "{service_script}"
 Restart=always
 RestartSec=3
+# 🛡️ Variáveis para travar resize no Wayland/Hyprland
+Environment="QT_WAYLAND_RESIZE_ON_CONTENT_CHANGE=0"
+Environment="QT_QPA_PLATFORM=wayland"
 
 [Install]
 WantedBy=default.target
@@ -33,7 +37,7 @@ WantedBy=default.target
     service_file.write_text(content, encoding="utf-8")
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
     subprocess.run(["systemctl", "--user", "enable", "--now", "anki-booster.service"], check=True)
-    print("✅ Linux: systemd service ativado (reinicia ao fechar)")
+    print("✅ Linux: systemd service ativado (reinicia ao fechar + vars Wayland)")
 
 def disable_linux():
     subprocess.run(["systemctl", "--user", "disable", "--now", "anki-booster.service"], check=False)
