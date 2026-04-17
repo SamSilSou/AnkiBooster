@@ -17,26 +17,30 @@ from booster_utils import (
     load_cards_from_anki
 )
 
+# Chaves válidas para validação de config via TCP
 VALID_CONFIG_KEYS = set(DEFAULT_CONFIG.keys())
 
+# Variáveis globais para acesso rápido à config (evita lookup repetido em loops)
 LIMIT_CARDS = GLOBAL_CORRECT = GLOBAL_WRONG = MAX_DAILY = BUFFER_SIZE = None
 FAVS_PRIORITY = REVLOG_DAYS = REVLOG_TYPES = FAV_BONUS = None
-FAV_LEVELS = {1: 6, 2: 4, 3: 2}
+FAV_LEVELS = {1: 6, 2: 4, 3: 2}  # Acertos consecutivos para subir de nível favorito
 
 
 class Bridge(QObject):
+    """Ponte PyQt6: expõe métodos Python para o QML via sinais/slots."""
     show = pyqtSignal(str)
     hide = pyqtSignal()
     
     def __init__(self, app_instance):
         super().__init__()
         self.app = app_instance
-        self.pending_callback = None
+        self.pending_callback = None  # Callback para resposta do usuário
         self.front_html = ""
         self.back_html = ""
     
     @pyqtSlot()
     def onShowAnswerClicked(self):
+        """Chamado pelo QML ao clicar em 'Mostrar resposta'."""
         if self.back_html:
             self.show.emit(self.back_html)
     
@@ -61,11 +65,13 @@ class Bridge(QObject):
     
     @pyqtSlot(int)
     def snoozeWithMinutes(self, minutes: int):
+        # Clamp de segurança: garante 1-120min mesmo se QML enviar valor inválido
         minutes = max(1, min(120, minutes))
         if self.app:
             self.app.snooze_current_card(minutes)
     
     def _send_answer(self, level: str):
+        """Dispara callback de processamento e esconde a UI."""
         if self.pending_callback:
             cb = self.pending_callback
             self._reset()
@@ -73,35 +79,44 @@ class Bridge(QObject):
             cb(level)
     
     def show_card(self, front_html: str, back_html: str, callback):
+        """Prepara e exibe card, armazenando callback para resposta."""
         self.pending_callback = callback
         self.front_html = front_html
         self.back_html = back_html
         self.show.emit(front_html)
     
     def _reset(self):
+        """Limpa estado interno após resposta."""
         self.pending_callback = None
         self.front_html = ""
         self.back_html = ""
 
 
 class App:
+    """Classe principal: orquestra estado, loop, UI e TCP."""
+    
     def __init__(self):
+        # Estado dos cards
         self.cards = []
         self.pool_cards = []
         self.active_cards = []
 
+        # Estado persistente
         self.state = load_json_file(STATE_FILE, {})
         self.daily = load_json_file(DAILY_FILE, {"date": str(datetime.date.today()), "cards_today": {}})
 
+        # Configuração
         self.config = load_config()
         self._apply_config_globals()
 
+        # Controle de fluxo
         self.next_global_show = 0
         self.reviewing = False
         self.allow_showing = False
         self.paused = False
         self._current_card = None
 
+        # UI QML
         self.bridge = Bridge(self)
         self.engine = QQmlApplicationEngine()
         self.engine.rootContext().setContextProperty("bridge", self.bridge)
@@ -112,6 +127,7 @@ class App:
             log("❌ Falha ao carregar theme.qml", "ERR")
             sys.exit(1)
         
+        # Configura janela: tamanho fixo, flags para Wayland
         root = self.engine.rootObjects()[0]
         root.setMinimumWidth(440)
         root.setMaximumWidth(440)
@@ -125,6 +141,7 @@ class App:
             | Qt.WindowType.BypassWindowManagerHint 
         )
 
+        # Debug config inicial
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, encoding='utf-8') as f:
@@ -133,14 +150,17 @@ class App:
             except Exception as e:
                 log(f"⚠️ Não foi possível ler config: {e}", "WARN")
 
+        # System Tray
         self._setup_tray_icon()
 
+        # Threads: TCP listener (daemon) + timer principal (3s)
         threading.Thread(target=self.tcp_listener, daemon=True).start()
         self.timer = QTimer()
         self.timer.timeout.connect(self.loop)
         self.timer.start(3000)
     
     def _apply_config_globals(self):
+        """Copia config para variáveis globais de acesso rápido."""
         global LIMIT_CARDS, GLOBAL_CORRECT, GLOBAL_WRONG, MAX_DAILY, BUFFER_SIZE
         global FAVS_PRIORITY, REVLOG_DAYS, REVLOG_TYPES, FAV_BONUS, FAV_LEVELS
         
@@ -155,6 +175,7 @@ class App:
         FAV_BONUS = FAVS_PRIORITY
     
     def _setup_tray_icon(self):
+        """Inicializa ícone de tray com fallback se não disponível."""
         if not QSystemTrayIcon.isSystemTrayAvailable():
             log("ℹ️ System tray não disponível", "INFO")
             return
@@ -170,6 +191,7 @@ class App:
         log("📍 Ícone de tray ativado", "OK")
 
     def _build_tray_menu(self):
+        """Monta menu dinâmico conforme estado (Iniciar/Pausar/Retomar)."""
         menu = QMenu()
         if not self.allow_showing:
             menu.addAction("▶️ Iniciar Booster").triggered.connect(self._tray_start)
@@ -181,6 +203,7 @@ class App:
         self.tray_icon.setContextMenu(menu)
 
     def _tray_start(self):
+        """Simula START via tray: carrega cards e libera exibição."""
         today = str(datetime.date.today())
         if self.daily.get("date") != today:
             self.daily = {"date": today, "cards_today": {}}
@@ -200,11 +223,13 @@ class App:
         self._refresh_tray()
 
     def _tray_toggle_pause(self):
+        """Alterna pausa global e atualiza menu da tray."""
         self.paused = not self.paused
         self._refresh_tray()
         log(f"⏸️ Booster {'PAUSADO' if self.paused else 'RETOMADO'} via Tray", "OK" if not self.paused else "WARN")
 
     def _tray_activated(self, reason):
+        """Duplo clique na tray: toggle visibilidade da janela."""
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             root = self.engine.rootObjects()[0] if self.engine.rootObjects() else None
             if root:
@@ -216,10 +241,15 @@ class App:
                     root.requestActivate()
 
     def _refresh_tray(self):
+        """Reconstrói menu da tray para refletir estado atual."""
         if hasattr(self, 'tray_icon') and self.tray_icon:
             self._build_tray_menu()
     
     def snooze_current_card(self, minutes: int = 60):
+        """
+        Adia card atual por X minutos sem alterar SRS.
+        Snooze é inofensivo: não consome limite, não altera streak/erros.
+        """
         if not self._current_card:
             log("⚠️ Nenhum card ativo para snooze", "WARN")
             return
@@ -235,13 +265,14 @@ class App:
         self.bridge.hide.emit()
         self.reviewing = False
         self._current_card = None
-        self.next_global_show = now
+        self.next_global_show = now  # Força verificação imediata do loop
 
         next_time = datetime.datetime.fromtimestamp(now + snooze_delay).strftime("%H:%M")
         log(f"🌙 Card {cid} adiado por {minutes}min (volta às {next_time})", "OK")
         self._refresh_tray()
     
     def tcp_listener(self):
+        """Listener TCP para comandos externos (START, config, favoritos)."""
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("127.0.0.1", CMD_PORT))
@@ -252,7 +283,7 @@ class App:
         while True:
             try:
                 conn, _ = sock.accept()
-                conn.settimeout(30)
+                conn.settimeout(30)  # Evita travamento se cliente sumir
                 with conn:
                     try:
                         cmd = conn.recv(4096).decode().strip()
@@ -373,6 +404,7 @@ class App:
                 break
     
     def prepare_buffer(self):
+        """Prepara buffer ativo (BUFFER_SIZE) e pool de reserva."""
         self.pool_cards = self.cards.copy()
         self.active_cards = self.pool_cards[:BUFFER_SIZE]
         self.pool_cards = self.pool_cards[BUFFER_SIZE:]
@@ -383,22 +415,25 @@ class App:
             log(f"🔍 Buffer ativo: {active_ids[:3]}{'...' if len(active_ids)>3 else ''}", "INFO")
 
     def _calculate_priority(self, card: dict, favs_set: set) -> tuple:
+        """Retorna tupla de prioridade para ordenação: mais erros > menor streak > favorito."""
         cid_str = str(card["id"])
         fav_bonus = FAV_BONUS if cid_str in favs_set else 0
         return (-card["errors_recent"], card.get("streak", 0), -fav_bonus)
 
     def loop(self):
+        """Loop principal: verifica cards disponíveis e exibe o de maior prioridade."""
         if self.paused: return
         now = time.time()
         
+        # Guards: pausa, ritmo global, permissão de exibição, revisão em andamento
         if now < self.next_global_show:
             return
-        
         if not self.allow_showing or self.reviewing:
             return
             
         available_cards = [c for c in self.active_cards if c.get("next_due", 0) <= now]
         
+        # Debug: explica por que nenhum card está disponível
         if not available_cards and self.active_cards:
             blocked = [c for c in self.active_cards if c.get("next_due", 0) > now]
             log(f"⚠️ {len(blocked)}/{len(self.active_cards)} cards bloqueados por next_due", "WARN")
@@ -411,6 +446,7 @@ class App:
             
         favs_set = set(get_all_favs())
         
+        # Debug: loga favoritos disponíveis e prioridades (apenas primeiros 2)
         favs_available = [c for c in available_cards if str(c["id"]) in favs_set]
         if favs_available:
             log(f"🔍 {len(favs_available)} favoritos disponíveis agora", "INFO")
@@ -423,6 +459,7 @@ class App:
                 hits = self.daily["cards_today"].get(cid, 0)
                 log(f"   📍 {cid} | errors={errors} | streak={streak} | fav_bonus={fav_bonus} | priority={priority} | hits={hits}/5", "INFO")
         
+        # Seleciona card de maior prioridade (min com tupla negativa inverte ordem)
         card = min(available_cards, key=lambda c: self._calculate_priority(c, favs_set))
 
         self.reviewing = True
@@ -439,6 +476,7 @@ class App:
         self.bridge.show_card(front_wrapped, back_wrapped, lambda l: self.process_card(card, l))
 
     def process_card(self, card: dict, level: str, favs_set: set = None):
+        """Processa resposta do usuário: atualiza SRS, persiste estado, agenda próximo."""
         now = time.time()
         cid = str(card["id"])
         log(f"🧠 Processando {cid} com nível '{level}'")
@@ -450,26 +488,24 @@ class App:
         count = self.daily["cards_today"].get(cid, 0)
         is_fav = cid in favs_set
 
+        # Atualiza métricas e calcula delay conforme nível
         if level == "Fácil":
             count += 1
             card["streak"] += 2
             card["errors_recent"] = max(0, card["errors_recent"] - 2)
             card_delay = GLOBAL_CORRECT * 3 - 15
             log(f"✅ Fácil: streak +2, erros -2, delay = {card_delay/60:.1f}min", "OK")
-            
         elif level == "Ok":
             count += 1
             card["streak"] += 2
             card["errors_recent"] = max(0, card["errors_recent"] - 1)
             card_delay = GLOBAL_CORRECT * 2 - 10
             log(f"👍 Ok: streak +2, erros -1, delay = {card_delay/60:.1f}min", "OK")
-            
         elif level == "Difícil":
             count += 1
             card["streak"] += 1
             card_delay = GLOBAL_CORRECT * 1 - 18
             log(f"😢 Difícil: streak +1, delay = {card_delay/60:.1f}min", "INFO")
-            
         elif level == "Errei":
             card["streak"] = 0
             card["errors_recent"] += 1
@@ -479,11 +515,11 @@ class App:
             card_delay = GLOBAL_CORRECT
             log(f"⚠️ Nível desconhecido '{level}', usando delay padrão", "WARN")
 
+        # Atualiza progresso de favoritos
         if is_fav and level != "Errei":
             card["fav_consecutive"] = card.get("fav_consecutive", 0) + 1
             current_level = card.get("fav_level", 1)
             required = FAV_LEVELS.get(current_level, 5)
-            
             if card["fav_consecutive"] >= required:
                 if current_level < 3:
                     card["fav_level"] = current_level + 1
@@ -507,12 +543,14 @@ class App:
         log(f"⏳ Próxima exibição do card em {int(card_delay)}s ({next_time})")
         log("-------------------------------------------------")
 
+        # Persiste estado
         self.daily["cards_today"][cid] = count
         save_json_file(DAILY_FILE, self.daily)
         self.state[cid] = card
         save_json_file(STATE_FILE, self.state)
         self.last_card_correct = level != "Errei"
 
+        # Rotação do buffer: remove se atingiu limite, senão move para o fim
         try:
             idx = next(i for i, c in enumerate(self.active_cards) if c["id"] == card["id"])
             if count >= max_hits:
@@ -527,6 +565,7 @@ class App:
         except StopIteration:
             pass
 
+        # Agenda próximo card: respeita delays curtos (ex: "Errei" = 5min)
         self.next_global_show = min(now + GLOBAL_CORRECT, now + card_delay)
         delay_real = int(self.next_global_show - now)
         next_hr = datetime.datetime.fromtimestamp(self.next_global_show).strftime("%H:%M:%S")
@@ -537,10 +576,10 @@ class App:
         self._current_card = None
     
     def toggle_fullscreen(self):
+        """Alterna fullscreen da janela principal."""
         root = self.engine.rootObjects()[0] if self.engine.rootObjects() else None
         if not root:
             return
-        
         if root.windowState() & Qt.WindowState.WindowFullScreen:
             root.setWindowState(Qt.WindowState.WindowNoState)
             root.setWidth(440)
@@ -552,6 +591,7 @@ class App:
 
 
 if __name__ == "__main__":
+    # Flags do QtWebEngine para compatibilidade Wayland e performance
     os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --no-sandbox --disable-software-rasterizer --allow-file-access-from-files --allow-file-access"
     
     app = QApplication(sys.argv)
