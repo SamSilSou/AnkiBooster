@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """
-Anki Booster - Serviço Principal
+Anki Booster - Serviço Principal (CÉREBRO ÚNICO)
 Lógica de UI, TCP, loop e processamento de cards.
+Service como fonte única da verdade; utils apenas executa.
+Tentei documentar as principais mudanças que realizei, porém não falo muito inglês kkk
+Logo, para obter uma documentação mais precisa, utilizei minha língua-mãe (Português do Brasil).
+Desde já agradeço a todo e qualquer auxílio, pois o fiz no meu tempo livre e, portanto, tenho certeza de que existem erros e bugs não percebidos.
+Utilizo no meu dia a dia esse sistema maravilhoso e sinto uma enorme diferença entre uma revisão e outra no Anki.
+À medida que uso, corrijo os bugs; portanto, como usuário e desenvolvedor, agradeço toda e qualquer ajuda.
+MUITO OBRIGADO por usar e por colaborar 😁❣️
 """
+
 import sys, os, time, socket, datetime, json, threading
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PyQt6.QtQml import QQmlApplicationEngine
@@ -11,36 +19,44 @@ from PyQt6.QtGui import QIcon
 
 from booster_utils import (
     SCRIPT_DIR, BOOSTER_DATA_DIR, STATE_FILE, DAILY_FILE, CONFIG_FILE, CMD_PORT,
-    DEFAULT_CONFIG, load_config, load_json_file, save_json_file,
-    log, get_all_favs, toggle_fav, graduate_fav, is_anki_closed,
-    _wrap_html, _get_fav_level_max,
-    load_cards_from_anki
+    # REMOVIDO: DEFAULT_CONFIG não existe mais no utils
+    load_config, load_json_file, save_json_file,
+    log, get_all_favs, toggle_fav, graduate_fav, is_anki_closed, get_anki_db,
+    # REMOVIDO: _get_fav_level_max (service tem FAV_LEVELS próprio)
+    _wrap_html, load_cards_from_anki
 )
 
-# Chaves válidas para validação de config via TCP
-VALID_CONFIG_KEYS = set(DEFAULT_CONFIG.keys())
+# VALID_CONFIG_KEYS definido aqui (fonte única da verdade)
+VALID_CONFIG_KEYS = {
+    "GLOBAL_CORRECT", "GLOBAL_WRONG", "BUFFER_SIZE", "MAX_DAILY", "REVLOG_DAYS",
+    "LIMIT_CARDS", "FAVS_PRIORITY", "REVLOG_TYPES", "FRONT_FIELDS", "BACK_FIELDS",
+    "MIN_CARD_DELAY", "HIDE_FURIGANA_ON_HOVER", "FAV_MAX_DAILY", "FAV_LEVEL_THRESHOLDS"
+}
 
-# Variáveis globais para acesso rápido à config (evita lookup repetido em loops)
-LIMIT_CARDS = GLOBAL_CORRECT = GLOBAL_WRONG = MAX_DAILY = BUFFER_SIZE = None
+# FAV_LEVELS como dict (service decide a lógica real de graduação)
+FAV_LEVELS = {1: 6, 2: 4, 3: 2}
+
+# Lock mínimo para thread-safety
+_state_lock = threading.Lock()
+
+# Variáveis globais para acesso rápido à config (cache)
+LIMIT_CARDS = GLOBAL_CORRECT = GLOBAL_WRONG = MAX_DAILY = BUFFER_SIZE = FAV_MAX_DAILY = None
 FAVS_PRIORITY = REVLOG_DAYS = REVLOG_TYPES = FAV_BONUS = None
-FAV_LEVELS = {1: 6, 2: 4, 3: 2}  # Acertos consecutivos para subir de nível favorito
 
 
 class Bridge(QObject):
-    """Ponte PyQt6: expõe métodos Python para o QML via sinais/slots."""
     show = pyqtSignal(str)
     hide = pyqtSignal()
     
     def __init__(self, app_instance):
         super().__init__()
         self.app = app_instance
-        self.pending_callback = None  # Callback para resposta do usuário
+        self.pending_callback = None
         self.front_html = ""
         self.back_html = ""
     
     @pyqtSlot()
     def onShowAnswerClicked(self):
-        """Chamado pelo QML ao clicar em 'Mostrar resposta'."""
         if self.back_html:
             self.show.emit(self.back_html)
     
@@ -65,13 +81,11 @@ class Bridge(QObject):
     
     @pyqtSlot(int)
     def snoozeWithMinutes(self, minutes: int):
-        # Clamp de segurança: garante 1-120min mesmo se QML enviar valor inválido
         minutes = max(1, min(120, minutes))
         if self.app:
             self.app.snooze_current_card(minutes)
     
     def _send_answer(self, level: str):
-        """Dispara callback de processamento e esconde a UI."""
         if self.pending_callback:
             cb = self.pending_callback
             self._reset()
@@ -79,44 +93,33 @@ class Bridge(QObject):
             cb(level)
     
     def show_card(self, front_html: str, back_html: str, callback):
-        """Prepara e exibe card, armazenando callback para resposta."""
         self.pending_callback = callback
         self.front_html = front_html
         self.back_html = back_html
         self.show.emit(front_html)
     
     def _reset(self):
-        """Limpa estado interno após resposta."""
         self.pending_callback = None
         self.front_html = ""
         self.back_html = ""
 
 
 class App:
-    """Classe principal: orquestra estado, loop, UI e TCP."""
-    
     def __init__(self):
-        # Estado dos cards
-        self.cards = []
-        self.pool_cards = []
-        self.active_cards = []
-
-        # Estado persistente
+        self.cards, self.pool_cards, self.active_cards = [], [], []
         self.state = load_json_file(STATE_FILE, {})
         self.daily = load_json_file(DAILY_FILE, {"date": str(datetime.date.today()), "cards_today": {}})
-
-        # Configuração
+        
+        # Config carregada pelo service (utils não tem DEFAULT_CONFIG)
         self.config = load_config()
         self._apply_config_globals()
-
-        # Controle de fluxo
+        
         self.next_global_show = 0
         self.reviewing = False
         self.allow_showing = False
         self.paused = False
         self._current_card = None
 
-        # UI QML
         self.bridge = Bridge(self)
         self.engine = QQmlApplicationEngine()
         self.engine.rootContext().setContextProperty("bridge", self.bridge)
@@ -127,7 +130,6 @@ class App:
             log("❌ Falha ao carregar theme.qml", "ERR")
             sys.exit(1)
         
-        # Configura janela: tamanho fixo, flags para Wayland
         root = self.engine.rootObjects()[0]
         root.setMinimumWidth(440)
         root.setMaximumWidth(440)
@@ -141,7 +143,6 @@ class App:
             | Qt.WindowType.BypassWindowManagerHint 
         )
 
-        # Debug config inicial
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, encoding='utf-8') as f:
@@ -150,32 +151,30 @@ class App:
             except Exception as e:
                 log(f"⚠️ Não foi possível ler config: {e}", "WARN")
 
-        # System Tray
         self._setup_tray_icon()
-
-        # Threads: TCP listener (daemon) + timer principal (3s)
         threading.Thread(target=self.tcp_listener, daemon=True).start()
         self.timer = QTimer()
         self.timer.timeout.connect(self.loop)
         self.timer.start(3000)
     
     def _apply_config_globals(self):
-        """Copia config para variáveis globais de acesso rápido."""
-        global LIMIT_CARDS, GLOBAL_CORRECT, GLOBAL_WRONG, MAX_DAILY, BUFFER_SIZE
-        global FAVS_PRIORITY, REVLOG_DAYS, REVLOG_TYPES, FAV_BONUS, FAV_LEVELS
+        """Copia config para variáveis globais de acesso rápido + fallbacks seguros"""
+        global LIMIT_CARDS, GLOBAL_CORRECT, GLOBAL_WRONG, MAX_DAILY, BUFFER_SIZE, FAV_MAX_DAILY
+        global FAVS_PRIORITY, REVLOG_DAYS, REVLOG_TYPES, FAV_BONUS
         
-        LIMIT_CARDS = self.config["LIMIT_CARDS"]
-        GLOBAL_CORRECT = self.config["GLOBAL_CORRECT"]
-        GLOBAL_WRONG = self.config["GLOBAL_WRONG"]
-        MAX_DAILY = self.config["MAX_DAILY"]
-        BUFFER_SIZE = self.config["BUFFER_SIZE"]
-        FAVS_PRIORITY = self.config["FAVS_PRIORITY"]
-        REVLOG_DAYS = self.config["REVLOG_DAYS"]
+        # Fallbacks embutidos (service é a fonte da verdade)
+        LIMIT_CARDS = self.config.get("LIMIT_CARDS", 200)
+        GLOBAL_CORRECT = self.config.get("GLOBAL_CORRECT", 1200)
+        GLOBAL_WRONG = self.config.get("GLOBAL_WRONG", 300)
+        MAX_DAILY = self.config.get("MAX_DAILY", 3)
+        BUFFER_SIZE = self.config.get("BUFFER_SIZE", 5)
+        FAV_MAX_DAILY = self.config.get("FAV_MAX_DAILY", 5)  # Limite de favoritos
+        FAVS_PRIORITY = self.config.get("FAVS_PRIORITY", 3)
+        REVLOG_DAYS = self.config.get("REVLOG_DAYS", 3)
         REVLOG_TYPES = self.config.get("REVLOG_TYPES", [0, 1, 2, 3])
         FAV_BONUS = FAVS_PRIORITY
     
     def _setup_tray_icon(self):
-        """Inicializa ícone de tray com fallback se não disponível."""
         if not QSystemTrayIcon.isSystemTrayAvailable():
             log("ℹ️ System tray não disponível", "INFO")
             return
@@ -186,32 +185,65 @@ class App:
         self.tray_icon = QSystemTrayIcon(icon)
         self.tray_icon.setToolTip("Anki Booster")
         self.tray_icon.activated.connect(self._tray_activated)
-        self._build_tray_menu()
+        
+        # ✅ Cria menu UMA VEZ e armazena como atributo
+        self.tray_menu = QMenu()
+        self.tray_icon.setContextMenu(self.tray_menu)
+        
+        self._build_tray_menu()  # Constrói estado inicial
         self.tray_icon.show()
         log("📍 Ícone de tray ativado", "OK")
 
     def _build_tray_menu(self):
-        """Monta menu dinâmico conforme estado (Iniciar/Pausar/Retomar)."""
-        menu = QMenu()
+        # ✅ Limpa ações anteriores (evita cache/duplicação no Qt)
+        self.tray_menu.clear()
+        
         if not self.allow_showing:
-            menu.addAction("▶️ Iniciar Booster").triggered.connect(self._tray_start)
+            action = self.tray_menu.addAction("▶️ Iniciar Booster")
+            action.triggered.connect(self._tray_start)
         else:
             label = "⏸️ Pausar" if not self.paused else "▶️ Retomar"
-            menu.addAction(label).triggered.connect(self._tray_toggle_pause)
-        menu.addSeparator()
-        menu.addAction("🚪 Sair").triggered.connect(QApplication.quit)
-        self.tray_icon.setContextMenu(menu)
+            action = self.tray_menu.addAction(label)
+            action.triggered.connect(self._tray_toggle_pause)
+            
+        self.tray_menu.addSeparator()
+        quit_action = self.tray_menu.addAction("🚪 Sair")
+        quit_action.triggered.connect(QApplication.quit)
 
     def _tray_start(self):
-        """Simula START via tray: carrega cards e libera exibição."""
         today = str(datetime.date.today())
+        # Limpeza leve do daily ao virar o dia
         if self.daily.get("date") != today:
-            self.daily = {"date": today, "cards_today": {}}
+            favs = set(get_all_favs())
+            self.daily = {
+                "date": today,
+                "cards_today": {cid: hits for cid, hits in self.daily.get("cards_today", {}).items() if cid in favs}
+            }
             save_json_file(DAILY_FILE, self.daily)
+            log(f"📅 Dia virado: daily.json atualizado", "INFO")
         
         self.config = load_config()
         self._apply_config_globals()
-        self.cards = load_cards_from_anki(self.config, self.state, self.daily)
+        
+        # Carrega cards com parâmetros explícitos (utils não decide filtros)
+        anki_db = get_anki_db()
+        if not anki_db:
+            log("❌ Não foi possível localizar o banco do Anki", "ERR")
+            return
+            
+        with _state_lock:
+            self.cards = load_cards_from_anki(
+                anki_db_path=anki_db,
+                favs=get_all_favs(),
+                state=self.state,
+                daily=self.daily,
+                # Filtros decididos pelo service:
+                revlog_days=REVLOG_DAYS,
+                revlog_types=REVLOG_TYPES,
+                limit_cards=LIMIT_CARDS,
+                front_fields=self.config.get("FRONT_FIELDS"),
+                back_fields=self.config.get("BACK_FIELDS"),
+            )
         
         if self.cards:
             self.prepare_buffer()
@@ -219,17 +251,14 @@ class App:
             log("▶️ Booster iniciado via Tray", "OK")
         else:
             log("⚠️ Nenhum card disponível para iniciar", "WARN")
-        
         self._refresh_tray()
 
     def _tray_toggle_pause(self):
-        """Alterna pausa global e atualiza menu da tray."""
         self.paused = not self.paused
         self._refresh_tray()
         log(f"⏸️ Booster {'PAUSADO' if self.paused else 'RETOMADO'} via Tray", "OK" if not self.paused else "WARN")
 
     def _tray_activated(self, reason):
-        """Duplo clique na tray: toggle visibilidade da janela."""
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             root = self.engine.rootObjects()[0] if self.engine.rootObjects() else None
             if root:
@@ -241,38 +270,151 @@ class App:
                     root.requestActivate()
 
     def _refresh_tray(self):
-        """Reconstrói menu da tray para refletir estado atual."""
-        if hasattr(self, 'tray_icon') and self.tray_icon:
+        """Reconstroi o menu refletindo o estado atual."""
+        if hasattr(self, 'tray_menu'):
             self._build_tray_menu()
     
     def snooze_current_card(self, minutes: int = 60):
-        """
-        Adia card atual por X minutos sem alterar SRS.
-        Snooze é inofensivo: não consome limite, não altera streak/erros.
-        """
         if not self._current_card:
             log("⚠️ Nenhum card ativo para snooze", "WARN")
             return
-        
         cid = str(self._current_card["id"])
         now = time.time()
         snooze_delay = minutes * 60
-        
         self._current_card["next_due"] = now + snooze_delay
         self.state[cid] = self._current_card
         save_json_file(STATE_FILE, self.state)
-        
         self.bridge.hide.emit()
         self.reviewing = False
         self._current_card = None
-        self.next_global_show = now  # Força verificação imediata do loop
-
+        self.next_global_show = now
         next_time = datetime.datetime.fromtimestamp(now + snooze_delay).strftime("%H:%M")
         log(f"🌙 Card {cid} adiado por {minutes}min (volta às {next_time})", "OK")
         self._refresh_tray()
     
+    def _handle_tcp_cmd(self, conn, cmd: str):
+        """Processa comandos TCP (mantido formato original de resposta)"""
+        if cmd == "START":
+            today = str(datetime.date.today())
+            if self.daily.get("date") != today:
+                favs = set(get_all_favs())
+                self.daily = {
+                    "date": today,
+                    "cards_today": {cid: hits for cid, hits in self.daily.get("cards_today", {}).items() if cid in favs}
+                }
+                save_json_file(DAILY_FILE, self.daily)
+            
+            self.config = load_config()
+            self._apply_config_globals()
+            log(f"🔍 Carregando cards (LIMIT_CARDS={LIMIT_CARDS}, FAVS_PRIORITY={FAVS_PRIORITY})...", "INFO")
+            
+            anki_db = get_anki_db()
+            if not anki_db:
+                conn.sendall(b"NO_CARDS")
+                return
+                
+            with _state_lock:
+                self.cards = load_cards_from_anki(
+                    anki_db_path=anki_db,
+                    favs=get_all_favs(),
+                    state=self.state,
+                    daily=self.daily,
+                    revlog_days=REVLOG_DAYS,
+                    revlog_types=REVLOG_TYPES,
+                    limit_cards=LIMIT_CARDS,
+                    front_fields=self.config.get("FRONT_FIELDS"),
+                    back_fields=self.config.get("BACK_FIELDS"),
+                )
+            
+            if self.cards:
+                favs_in_cards = [c for c in self.cards if str(c["id"]) in get_all_favs()]
+                log(f"✅ {len(self.cards)} cards carregados | {len(favs_in_cards)} são favoritos", "OK")
+                
+                all_favs = get_all_favs()
+                loaded_fav_ids = {str(c["id"]) for c in self.cards if str(c["id"]) in all_favs}
+                filtered_favs = [f for f in all_favs if f not in loaded_fav_ids]
+                
+                if filtered_favs:
+                    reasons = []
+                    now = time.time()
+                    for cid in filtered_favs[:3]:
+                        s_cid = self.state.get(cid, {})
+                        due = s_cid.get("next_due", 0)
+                        hits = self.daily.get("cards_today", {}).get(cid, 0)
+                        if due > now:
+                            wait_min = int((due - now) / 60)
+                            reasons.append(f"{cid} (snooze: {wait_min}min)")
+                        elif hits >= FAV_MAX_DAILY:
+                            reasons.append(f"{cid} (limite diário: {hits}/{FAV_MAX_DAILY})")
+                        else:
+                            reasons.append(f"{cid} (filtro)")
+                    log(f"⏳ {len(filtered_favs)} favoritos agendados/filtrados: {', '.join(reasons)}", "INFO")
+
+                self.prepare_buffer()
+                self.allow_showing = True
+                conn.sendall(b"OK")
+                log("⬆️ OK", "OK")
+                log("-------------------------------------------------")
+            else:
+                if not is_anki_closed():
+                    conn.sendall(b"ANKI_OPEN")
+                else:
+                    conn.sendall(b"NO_CARDS")
+
+        elif cmd == "GET_FAVS":
+            favs = get_all_favs()
+            conn.sendall(json.dumps(favs).encode())
+        elif cmd.startswith("TOGGLE_FAV:"):
+            try:
+                cid = cmd.split(":", 1)[1]
+                toggle_fav(cid)
+                favs = get_all_favs()
+                conn.sendall(json.dumps(favs).encode())
+            except Exception as e:
+                log(f"❌ Erro ao toggle fav: {e}", "ERR")
+                conn.sendall(b"[]")
+        elif cmd.startswith("SAVE_CONFIG:"):
+            try:
+                json_str = cmd[len("SAVE_CONFIG:"):]
+                new_cfg = json.loads(json_str)
+                #  Filtra apenas chaves válidas definidas no service
+                filtered_cfg = {k: v for k, v in new_cfg.items() if k in VALID_CONFIG_KEYS}
+                current_cfg = load_config()
+                final_cfg = {**current_cfg, **filtered_cfg}
+                with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(final_cfg, f, indent=2, ensure_ascii=False)
+                log("------------------------------------------------", "INFO")
+                log("📋 Config salva:", "INFO")
+                for key in VALID_CONFIG_KEYS:
+                    if key in filtered_cfg:
+                        old_val = current_cfg.get(key)
+                        new_val = final_cfg[key]
+                        log(f"   {key}: {old_val} → {new_val} ✅", "OK")
+                self.config = final_cfg
+                self._apply_config_globals()
+                conn.sendall(b"OK")
+                log("⬆️ Config recebida e salva via TCP", "OK")
+                log("-------------------------------------------------", "INFO")
+            except json.JSONDecodeError as e:
+                log(f"❌ JSON inválido: {e}", "ERR")
+                conn.sendall(b"INVALID_JSON")
+            except Exception as e:
+                log(f"❌ Erro ao salvar config: {e}", "ERR")
+                conn.sendall(b"SAVE_ERROR")
+        elif cmd == "TOGGLE_PAUSE":
+            self.paused = not self.paused
+            estado = "PAUSED" if self.paused else "RUNNING"
+            log(f"⏸️ Booster {'PAUSADO' if self.paused else 'RETOMADO'}!", "WARN" if self.paused else "OK")
+            conn.sendall(estado.encode())
+            self._refresh_tray()
+        elif cmd == "GET_CONFIG":
+            conn.sendall(json.dumps(self.config).encode())
+            log("⬆️ Config enviada via TCP", "INFO")
+        else:
+            conn.sendall(b"UNKNOWN_CMD")
+
     def tcp_listener(self):
-        """Listener TCP para comandos externos (START, config, favoritos)."""
+        """Listener TCP - mantido formato original (recv único por comando)"""
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("127.0.0.1", CMD_PORT))
@@ -283,160 +425,51 @@ class App:
         while True:
             try:
                 conn, _ = sock.accept()
-                conn.settimeout(30)  # Evita travamento se cliente sumir
+                conn.settimeout(30)
                 with conn:
                     try:
                         cmd = conn.recv(4096).decode().strip()
                     except (socket.timeout, Exception):
                         continue
-                    
                     if not cmd:
                         continue
                     log(f"⬇️ {cmd}")
-
-                    if cmd == "START":
-                        today = str(datetime.date.today())
-                        if self.daily.get("date") != today:
-                            self.daily = {"date": today, "cards_today": {}}
-                            save_json_file(DAILY_FILE, self.daily)
-                        
-                        self.config = load_config()
-                        self._apply_config_globals()
-                        log(f"🔍 Carregando cards (LIMIT_CARDS={LIMIT_CARDS}, FAVS_PRIORITY={FAVS_PRIORITY})...", "INFO")
-                        self.cards = load_cards_from_anki(self.config, self.state, self.daily)
-                        
-                        if self.cards:
-                            favs_in_cards = [c for c in self.cards if str(c["id"]) in get_all_favs()]
-                            log(f"✅ {len(self.cards)} cards carregados | {len(favs_in_cards)} são favoritos", "OK")
-                            
-                            all_favs = get_all_favs()
-                            loaded_fav_ids = {str(c["id"]) for c in self.cards if str(c["id"]) in all_favs}
-                            filtered_favs = [f for f in all_favs if f not in loaded_fav_ids]
-                            
-                            if filtered_favs:
-                                reasons = []
-                                now = time.time()
-                                for cid in filtered_favs[:3]:
-                                    s_cid = self.state.get(cid, {})
-                                    due = s_cid.get("next_due", 0)
-                                    hits = self.daily.get("cards_today", {}).get(cid, 0)
-                                    
-                                    if due > now:
-                                        wait_min = int((due - now) / 60)
-                                        reasons.append(f"{cid} (snooze: {wait_min}min)")
-                                    elif hits >= 5:
-                                        reasons.append(f"{cid} (limite diário: {hits}/5)")
-                                    else:
-                                        reasons.append(f"{cid} (filtro)")
-                                log(f"⏳ {len(filtered_favs)} favoritos agendados/filtrados: {', '.join(reasons)}", "INFO")
-
-                            self.prepare_buffer()
-                            self.allow_showing = True
-                            conn.sendall(b"OK")
-                            log("⬆️ OK", "OK")
-                            log("-------------------------------------------------")
-                        else:
-                            if not is_anki_closed():
-                                conn.sendall(b"ANKI_OPEN")
-                            else:
-                                conn.sendall(b"NO_CARDS")
-
-                    elif cmd == "GET_FAVS":
-                        favs = get_all_favs()
-                        conn.sendall(json.dumps(favs).encode())
-
-                    elif cmd.startswith("TOGGLE_FAV:"):
-                        try:
-                            cid = cmd.split(":", 1)[1]
-                            toggle_fav(cid)
-                            favs = get_all_favs()
-                            conn.sendall(json.dumps(favs).encode())
-                        except Exception as e:
-                            log(f"❌ Erro ao toggle fav: {e}", "ERR")
-                            conn.sendall(b"[]")
-
-                    elif cmd.startswith("SAVE_CONFIG:"):
-                        try:
-                            json_str = cmd[len("SAVE_CONFIG:"):]
-                            new_cfg = json.loads(json_str)
-                            filtered_cfg = {k: v for k, v in new_cfg.items() if k in VALID_CONFIG_KEYS}
-                            current_cfg = load_config()
-                            final_cfg = {**current_cfg, **filtered_cfg}
-                                
-                            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-                                json.dump(final_cfg, f, indent=2, ensure_ascii=False)
-                            
-                            log("------------------------------------------------", "INFO")
-                            log("📋 Config salva:", "INFO")
-                            for key in VALID_CONFIG_KEYS:
-                                if key in filtered_cfg:
-                                    old_val = current_cfg.get(key)
-                                    new_val = final_cfg[key]
-                                    log(f"   {key}: {old_val} → {new_val} ✅", "OK")
-                            
-                            self.config = final_cfg
-                            self._apply_config_globals()
-                            conn.sendall(b"OK")
-                            log("⬆️ Config recebida e salva via TCP", "OK")
-                            log("-------------------------------------------------", "INFO")
-                                
-                        except json.JSONDecodeError as e:
-                            log(f"❌ JSON inválido: {e}", "ERR")
-                            conn.sendall(b"INVALID_JSON")
-                        except Exception as e:
-                            log(f"❌ Erro ao salvar config: {e}", "ERR")
-                            conn.sendall(b"SAVE_ERROR")
-
-                    elif cmd == "TOGGLE_PAUSE":
-                        self.paused = not self.paused
-                        estado = "PAUSED" if self.paused else "RUNNING"
-                        log(f"⏸️ Booster {'PAUSADO' if self.paused else 'RETOMADO'}!", "WARN" if self.paused else "OK")
-                        conn.sendall(estado.encode())
-                        self._refresh_tray()
-
-                    elif cmd == "GET_CONFIG":
-                        conn.sendall(json.dumps(self.config).encode())
-                        log("⬆️ Config enviada via TCP", "INFO")
-
-                    else:
-                        conn.sendall(b"UNKNOWN_CMD")
+                    self._handle_tcp_cmd(conn, cmd)
             except OSError:
                 break
     
     def prepare_buffer(self):
-        """Prepara buffer ativo (BUFFER_SIZE) e pool de reserva."""
+        safe_buffer = max(1, BUFFER_SIZE or 1)
         self.pool_cards = self.cards.copy()
-        self.active_cards = self.pool_cards[:BUFFER_SIZE]
-        self.pool_cards = self.pool_cards[BUFFER_SIZE:]
+        self.active_cards = self.pool_cards[:safe_buffer]
+        self.pool_cards = self.pool_cards[safe_buffer:]
         log(f"📦 Buffer {len(self.active_cards)} | Pool {len(self.pool_cards)}")
-        
-        if self.active_cards:
-            active_ids = [str(c["id"]) for c in self.active_cards]
-            log(f"🔍 Buffer ativo: {active_ids[:3]}{'...' if len(active_ids)>3 else ''}", "INFO")
+
 
     def _calculate_priority(self, card: dict, favs_set: set) -> tuple:
-        """Retorna tupla de prioridade para ordenação: mais erros > menor streak > favorito."""
         cid_str = str(card["id"])
         fav_bonus = FAV_BONUS if cid_str in favs_set else 0
-        return (-card["errors_recent"], card.get("streak", 0), -fav_bonus)
+        return (-card.get("errors_recent", 0), card.get("streak", 0), -fav_bonus)
 
     def loop(self):
-        """Loop principal: verifica cards disponíveis e exibe o de maior prioridade."""
         if self.paused: return
         now = time.time()
-        
-        # Guards: pausa, ritmo global, permissão de exibição, revisão em andamento
         if now < self.next_global_show:
             return
         if not self.allow_showing or self.reviewing:
             return
-            
-        available_cards = [c for c in self.active_cards if c.get("next_due", 0) <= now]
         
-        # Debug: explica por que nenhum card está disponível
-        if not available_cards and self.active_cards:
-            blocked = [c for c in self.active_cards if c.get("next_due", 0) > now]
-            log(f"⚠️ {len(blocked)}/{len(self.active_cards)} cards bloqueados por next_due", "WARN")
+        # Cópia leve para evitar leitura durante modificação pelo TCP
+        with _state_lock:
+            active_cards_copy = self.active_cards.copy()
+            daily_copy = {"cards_today": dict(self.daily.get("cards_today", {}))}
+        
+        # Service filtra por next_due (utils não decide isso)
+        available_cards = [c for c in active_cards_copy if c.get("next_due", 0) <= now]
+        
+        if not available_cards and active_cards_copy:
+            blocked = [c for c in active_cards_copy if c.get("next_due", 0) > now]
+            log(f"⚠️ {len(blocked)}/{len(active_cards_copy)} cards bloqueados por next_due", "WARN")
             if blocked:
                 sample = blocked[0]
                 log(f"🔍 Exemplo: CID {sample['id']} | next_due={sample['next_due']:.0f} | agora={now:.0f} | falta={(sample['next_due']-now)/60:.1f}min", "INFO")
@@ -445,21 +478,18 @@ class App:
             return
             
         favs_set = set(get_all_favs())
-        
-        # Debug: loga favoritos disponíveis e prioridades (apenas primeiros 2)
         favs_available = [c for c in available_cards if str(c["id"]) in favs_set]
         if favs_available:
             log(f"🔍 {len(favs_available)} favoritos disponíveis agora", "INFO")
             for c in favs_available[:2]:
                 cid = str(c["id"])
-                errors = c["errors_recent"]
+                errors = c.get("errors_recent", 0)
                 streak = c.get("streak", 0)
                 fav_bonus = FAV_BONUS if cid in favs_set else 0
                 priority = (-errors, streak, -fav_bonus)
-                hits = self.daily["cards_today"].get(cid, 0)
-                log(f"   📍 {cid} | errors={errors} | streak={streak} | fav_bonus={fav_bonus} | priority={priority} | hits={hits}/5", "INFO")
+                hits = daily_copy["cards_today"].get(cid, 0)
+                log(f"   📍 {cid} | errors={errors} | streak={streak} | fav_bonus={fav_bonus} | priority={priority} | hits={hits}/{FAV_MAX_DAILY}", "INFO")
         
-        # Seleciona card de maior prioridade (min com tupla negativa inverte ordem)
         card = min(available_cards, key=lambda c: self._calculate_priority(c, favs_set))
 
         self.reviewing = True
@@ -468,15 +498,28 @@ class App:
         starred = str(card["id"]) in favs_set
         level = card.get("fav_level", 1) if starred else 1
         consecutive = card.get("fav_consecutive", 0) if starred else 0
-        
         log(f"🎯 Card selecionado: {card['id']} | fav={starred} | errors={card['errors_recent']} | streak={card.get('streak',0)}", "OK")
         
-        front_wrapped = _wrap_html(card["front"], starred, level, consecutive, self.config)
-        back_wrapped = _wrap_html(card["back"], starred, level, consecutive, self.config)
+        # _wrap_html recebe thresholds do service + flag de furigana
+        front_wrapped = _wrap_html(
+            card["front"],
+            starred=starred,
+            level=level,
+            consecutive=consecutive,
+            fav_thresholds=FAV_LEVELS,  # DO SERVICE
+            hide_furigana=self.config.get("HIDE_FURIGANA_ON_HOVER", False)
+        )
+        back_wrapped = _wrap_html(
+            card["back"],
+            starred=starred,
+            level=level,
+            consecutive=consecutive,
+            fav_thresholds=FAV_LEVELS,
+            hide_furigana=self.config.get("HIDE_FURIGANA_ON_HOVER", False)
+        )
         self.bridge.show_card(front_wrapped, back_wrapped, lambda l: self.process_card(card, l))
 
     def process_card(self, card: dict, level: str, favs_set: set = None):
-        """Processa resposta do usuário: atualiza SRS, persiste estado, agenda próximo."""
         now = time.time()
         cid = str(card["id"])
         log(f"🧠 Processando {cid} com nível '{level}'")
@@ -484,22 +527,22 @@ class App:
         if favs_set is None:
             favs_set = set(get_all_favs())
         
-        max_hits = 5 if cid in favs_set else MAX_DAILY
+        # Usa FAV_MAX_DAILY do service (não hardcoded)
+        max_hits = FAV_MAX_DAILY if cid in favs_set else MAX_DAILY
         count = self.daily["cards_today"].get(cid, 0)
         is_fav = cid in favs_set
 
-        # Atualiza métricas e calcula delay conforme nível
         if level == "Fácil":
             count += 1
             card["streak"] += 2
             card["errors_recent"] = max(0, card["errors_recent"] - 2)
-            card_delay = GLOBAL_CORRECT * 3 - 15
+            card_delay = GLOBAL_CORRECT * 5 - 15
             log(f"✅ Fácil: streak +2, erros -2, delay = {card_delay/60:.1f}min", "OK")
         elif level == "Ok":
             count += 1
             card["streak"] += 2
             card["errors_recent"] = max(0, card["errors_recent"] - 1)
-            card_delay = GLOBAL_CORRECT * 2 - 10
+            card_delay = GLOBAL_CORRECT * 2.5 - 10
             log(f"👍 Ok: streak +2, erros -1, delay = {card_delay/60:.1f}min", "OK")
         elif level == "Difícil":
             count += 1
@@ -515,10 +558,11 @@ class App:
             card_delay = GLOBAL_CORRECT
             log(f"⚠️ Nível desconhecido '{level}', usando delay padrão", "WARN")
 
-        # Atualiza progresso de favoritos
+        # Progresso de favoritos
         if is_fav and level != "Errei":
             card["fav_consecutive"] = card.get("fav_consecutive", 0) + 1
             current_level = card.get("fav_level", 1)
+            # Usa FAV_LEVELS do service (fonte única da verdade)
             required = FAV_LEVELS.get(current_level, 5)
             if card["fav_consecutive"] >= required:
                 if current_level < 3:
@@ -550,22 +594,23 @@ class App:
         save_json_file(STATE_FILE, self.state)
         self.last_card_correct = level != "Errei"
 
-        # Rotação do buffer: remove se atingiu limite, senão move para o fim
+        # Rotação do buffer
         try:
-            idx = next(i for i, c in enumerate(self.active_cards) if c["id"] == card["id"])
-            if count >= max_hits:
-                log(f"🚫 Saiu ({count}/{max_hits})", "WARN")
-                self.active_cards.pop(idx)
-                if self.pool_cards:
-                    self.active_cards.append(self.pool_cards.pop(0))
-            else:
-                log(f"🔄 Rotação ({count}/{max_hits})")
-                log("-------------------------------------------------")
-                self.active_cards.append(self.active_cards.pop(idx))
+            with _state_lock:
+                idx = next(i for i, c in enumerate(self.active_cards) if c["id"] == card["id"])
+                if count >= max_hits:
+                    log(f"🚫 Saiu ({count}/{max_hits})", "WARN")
+                    self.active_cards.pop(idx)
+                    if self.pool_cards:
+                        self.active_cards.append(self.pool_cards.pop(0))
+                else:
+                    log(f"🔄 Rotação ({count}/{max_hits})")
+                    log("-------------------------------------------------")
+                    self.active_cards.append(self.active_cards.pop(idx))
         except StopIteration:
             pass
 
-        # Agenda próximo card: respeita delays curtos (ex: "Errei" = 5min)
+        # Mantido: Lógica original de ritmo (GLOBAL_CORRECT como teto)
         self.next_global_show = min(now + GLOBAL_CORRECT, now + card_delay)
         delay_real = int(self.next_global_show - now)
         next_hr = datetime.datetime.fromtimestamp(self.next_global_show).strftime("%H:%M:%S")
@@ -576,7 +621,6 @@ class App:
         self._current_card = None
     
     def toggle_fullscreen(self):
-        """Alterna fullscreen da janela principal."""
         root = self.engine.rootObjects()[0] if self.engine.rootObjects() else None
         if not root:
             return
@@ -591,10 +635,8 @@ class App:
 
 
 if __name__ == "__main__":
-    # Flags do QtWebEngine para compatibilidade Wayland e performance
     os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --no-sandbox --disable-software-rasterizer --allow-file-access-from-files --allow-file-access"
-    
     app = QApplication(sys.argv)
-    App()
+    app_instance = App()  # garante que config foi aplicada
     log(f"🚀 Booster rodando | FAVS_PRIORITY: {FAV_BONUS} | UI: QML")
     sys.exit(app.exec())

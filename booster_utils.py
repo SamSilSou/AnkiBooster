@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-🔧 Anki Booster - Utilitários
-Funções de path, config, log, DB, HTML e mídia.
+🔧 Anki Booster - Utilitários (MODO: DEPENDENTE DO SERVICE)
+Este módulo NÃO toma decisões. Apenas executa operações quando solicitado.
+✅ Arquitetura: service como cérebro único; utils como braço executor.
 """
 import os, sys, json, sqlite3, datetime, platform, pathlib, re, base64, shutil, tempfile, time
 from typing import Optional, List, Dict, Any
@@ -34,43 +35,7 @@ DAILY_FILE = os.path.join(BOOSTER_DATA_DIR, "anki_booster_daily.json")
 DB_FILE = os.path.join(BOOSTER_DATA_DIR, "anki_booster.db")
 CONFIG_FILE = os.path.join(BOOSTER_DATA_DIR, "anki_booster_config.json")
 CMD_PORT = 8894
-
-# Caminho base do Anki
 BASE_ANKI = get_anki_base_path()
-
-# ───────────────── CONFIG PADRÃO ─────────────────
-DEFAULT_CONFIG = {
-    "GLOBAL_CORRECT": 1200,
-    "GLOBAL_WRONG": 300,
-    "BUFFER_SIZE": 5,
-    "MAX_DAILY": 3,
-    "REVLOG_DAYS": 3,
-    "LIMIT_CARDS": 200,
-    "FAVS_PRIORITY": 3,
-    "REVLOG_TYPES": [0, 1, 2, 3],
-    "FRONT_FIELDS": None,
-    "BACK_FIELDS": None,
-    "MIN_CARD_DELAY": 20,
-    "HIDE_FURIGANA_ON_HOVER": False  # Oculta furigana até hover no popup
-}
-
-def load_config() -> Dict[str, Any]:
-    """Carrega config do arquivo ou retorna padrão, com logs de erro"""
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, encoding='utf-8') as f:
-                loaded = json.load(f)
-                log(f"📄 Config carregada: {CONFIG_FILE}", "INFO")
-                return {**DEFAULT_CONFIG, **loaded}
-        except json.JSONDecodeError as e:
-            log(f"❌ JSON inválido em {CONFIG_FILE}: {e}", "ERR")
-        except PermissionError:
-            log(f"❌ Sem permissão para ler {CONFIG_FILE}", "ERR")
-        except Exception as e:
-            log(f"❌ Erro ao carregar config: {type(e).__name__}: {e}", "ERR")
-    else:
-        log(f"📄 Config não encontrada, usando padrão", "INFO")
-    return DEFAULT_CONFIG.copy()
 
 # ───────────────── LOG UTILS ─────────────────
 def log(msg: str, level: str = "INFO") -> None:
@@ -82,13 +47,13 @@ def log(msg: str, level: str = "INFO") -> None:
 
 # ───────────────── JSON UTILS ─────────────────
 def load_json_file(path: str, default: Any) -> Any:
-    """Carrega JSON com fallback"""
+    """Carrega JSON com fallback e logging de erro"""
     if os.path.exists(path):
         try:
             with open(path, encoding='utf-8') as f:
                 return json.load(f)
-        except:
-            pass
+        except Exception as e:
+            log(f"⚠️ Erro ao ler JSON {path}: {e}", "WARN")
     return default
 
 def save_json_file(path: str, data: Any) -> None:
@@ -97,7 +62,28 @@ def save_json_file(path: str, data: Any) -> None:
     with open(path, "w", encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+# ───────────────── CONFIG LOADER (✅ ADICIONADO DE VOLTA) ─────────────────
+def load_config() -> Dict[str, Any]:
+    """
+    Carrega config do arquivo ou retorna dict vazio.
+    ✅ Service aplica defaults → utils não decide valores padrão.
+    """
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, encoding='utf-8') as f:
+                loaded = json.load(f)
+                log(f"📄 Config carregada: {CONFIG_FILE}", "INFO")
+                return loaded
+        except json.JSONDecodeError as e:
+            log(f"❌ JSON inválido em {CONFIG_FILE}: {e}", "ERR")
+        except PermissionError:
+            log(f"❌ Sem permissão para ler {CONFIG_FILE}", "ERR")
+        except Exception as e:
+            log(f"❌ Erro ao carregar config: {type(e).__name__}: {e}", "ERR")
+    return {}  # Service aplica defaults
+
 # ───────────────── FAVORITOS (SQLite local) ─────────────────
+# ✅ Apenas operações CRUD. Sem lógica de negócio.
 _fav_conn: Optional[sqlite3.Connection] = None
 
 def _get_fav_conn() -> sqlite3.Connection:
@@ -176,42 +162,30 @@ def is_anki_closed() -> bool:
         return False
 
 # ───────────────── HTML WRAPPER ─────────────────
-def _wrap_html(content: str, starred: bool = False, level: int = 1, consecutive: int = 0, config: dict = None) -> str:
-    """Envolve o conteúdo do card com CSS e indicadores de favorito"""
+def _wrap_html(content: str, starred: bool, level: int, consecutive: int, 
+               fav_thresholds: Dict[int, int], hide_furigana: bool) -> str:
+    """
+    Envolve o conteúdo do card com CSS e indicadores.
+    ✅ fav_thresholds vem do service → UI sempre alinhada com backend.
+    """
     star_html = "⭐" if starred else ""
-    level_html = f" <span style='font-size:12px;color:#ffd700'>[N{level}: {consecutive}/{_get_fav_level_max(level)}]</span>" if starred else ""
+    # ✅ Usa thresholds do service para exibir progresso correto
+    required = fav_thresholds.get(level, 5)
+    level_html = f" <span style='font-size:12px;color:#ffd700'>[N{level}: {consecutive}/{required}]</span>" if starred else ""
     
     hide_scrollbar_css = """
     <style>
-        html, body {
-            margin: 0; padding: 0; height: 100%;
-            overflow-y: auto !important; overflow-x: hidden !important;
-            scrollbar-width: none !important; -ms-overflow-style: none !important;
-        }
-        ::-webkit-scrollbar { display: none !important; width: 0 !important; background: transparent !important; }
-        ::-webkit-scrollbar-thumb { display: none !important; background: transparent !important; }
-        ::-webkit-scrollbar-track { display: none !important; }
+        html, body { margin: 0; padding: 0; height: 100%; overflow-y: auto !important; overflow-x: hidden !important; scrollbar-width: none !important; }
+        ::-webkit-scrollbar { display: none !important; }
     </style>
     """
-
-    # CSS Furigana Hover (injetado no popup se ativado)
+    
     furigana_css = ""
-    if config and config.get("HIDE_FURIGANA_ON_HOVER"):
+    if hide_furigana:
         furigana_css = """
         <style>
-        @media (hover: hover) {
-            ruby rt {
-                opacity: 0;
-                transition: opacity 0.2s ease;
-                pointer-events: none;
-            }
-            ruby:hover rt {
-                opacity: 1;
-            }
-        }
-        @media (hover: none) {
-            ruby rt { opacity: 1 !important; }
-        }
+        @media (hover: hover) { ruby rt { opacity: 0; transition: opacity 0.2s ease; } ruby:hover rt { opacity: 1; } }
+        @media (hover: none) { ruby rt { opacity: 1 !important; } }
         </style>
         """
     
@@ -228,15 +202,11 @@ def _wrap_html(content: str, starred: bool = False, level: int = 1, consecutive:
     </div>
     """
 
-
-def _get_fav_level_max(level: int) -> int:
-    """Retorna o número de acertos necessários para o nível de favorito"""
-    return {1: 5, 2: 3, 3: 2}.get(level, 5)
-
-# ───────────────── MEDIA PARSER (Áudio Base64) ─────────────────
+# ───────────────── MEDIA PARSER ─────────────────
 def _parse_anki_media(text: str, media_dir: Optional[str]) -> str:
     """
     Converte tags [sound:xxx.mp3] do Anki para <audio> HTML5 embutido em Base64.
+    ✅ FIX: prefixo `data:` adicionado para funcionar no WebView
     """
     if not text or not media_dir:
         return text
@@ -257,6 +227,7 @@ def _parse_anki_media(text: str, media_dir: Optional[str]) -> str:
                 }
                 mime = mime_map.get(ext, 'audio/mpeg')
                 
+                # ✅ FIX CRÍTICO: prefixo `data:` para data URI funcionar
                 return f'<audio controls src="data:{mime};base64,{b64}"></audio>'
             except Exception as e:
                 log(f"⚠️ Erro ao ler áudio {filename}: {e}", "WARN")
@@ -268,55 +239,57 @@ def _parse_anki_media(text: str, media_dir: Optional[str]) -> str:
 
 # ───────────────── CARD LOADER ─────────────────
 def load_cards_from_anki(
-    config: Dict[str, Any],
+    anki_db_path: str,
+    favs: List[str],
     state: Dict[str, Any],
-    daily: Dict[str, Any]
+    daily: Dict[str, Any],
+    # ✅ Filtros decididos pelo service (utils não decide nada):
+    revlog_days: int,
+    revlog_types: List[int],
+    limit_cards: int,
+    front_fields: Optional[List[int]],
+    back_fields: Optional[List[int]],
 ) -> List[Dict[str, Any]]:
     """
-    Carrega cards do banco do Anki com filtros e processamento.
+    Carrega cards brutos do Anki.
+    ✅ NÃO filtra por next_due, limites ou favoritos.
+    ✅ Retorna cards brutos para o service decidir o que fazer.
     """
-    log("📂 Lendo Anki (revlog + favoritos)...")
+    log(f"📂 Lendo Anki: {revlog_days}d, tipos={revlog_types}, limite={limit_cards}...")
     temp_dir = None
     
     try:
         temp_dir = tempfile.mkdtemp(prefix="anki_booster_")
         temp_db = os.path.join(temp_dir, "collection.anki2")
-        ANKI_DB = get_anki_db()
         
-        if not ANKI_DB:
+        if not os.path.exists(anki_db_path):
+            log(f"❌ DB do Anki não encontrado: {anki_db_path}", "ERR")
             return []
             
-        shutil.copy2(ANKI_DB, temp_db)
-
-        cutoff = int((time.time() - config["REVLOG_DAYS"] * 24 * 60 * 60) * 1000)
-        favs = get_all_favs()
+        shutil.copy2(anki_db_path, temp_db)
+        cutoff = int((time.time() - revlog_days * 86400) * 1000)  # 86400 = 24*60*60
         conn = sqlite3.connect(temp_db)
 
-        # Query: Favoritos
-        fav_raw = []
-        fav_ints = []
-        
+        # Query: Favoritos (se houver)
+        fav_raw, fav_ints = [], []
         if favs:
             try:
                 fav_ints = [int(f) for f in favs]
             except ValueError:
                 fav_ints = []
-
             if fav_ints:
-                fav_placeholders = ','.join('?' * len(fav_ints))
-                fav_raw = conn.execute(f"""
-                    SELECT DISTINCT c.id, n.flds, n.mid 
-                    FROM cards c 
-                    JOIN notes n ON c.nid = n.id 
-                    WHERE c.id IN ({fav_placeholders})
-                """, fav_ints).fetchall()
+                placeholders = ','.join('?' * len(fav_ints))
+                fav_raw = conn.execute(
+                    f"SELECT DISTINCT c.id, n.flds, n.mid FROM cards c JOIN notes n ON c.nid = n.id WHERE c.id IN ({placeholders})",
+                    fav_ints
+                ).fetchall()
 
-        # Query: Não-favoritos
-        revlog_types = config["REVLOG_TYPES"] if isinstance(config["REVLOG_TYPES"], list) else [0,1,2,3]
-        revlog_placeholders = ','.join(map(str, revlog_types))
-        
+        # Query: Não-favoritos com revlog recente
+        # ✅ SQL seguro com placeholders parameterizados
+        revlog_placeholders = ','.join('?' * len(revlog_types))
         exclude_clause = f"AND c.id NOT IN ({','.join(['?']*len(fav_ints))})" if fav_ints else ""
-        non_fav_query = f"""
+        
+        query = f"""
             SELECT DISTINCT c.id, n.flds, n.mid 
             FROM cards c 
             JOIN notes n ON c.nid = n.id 
@@ -324,10 +297,11 @@ def load_cards_from_anki(
             WHERE r.id > ? AND r.type IN ({revlog_placeholders}) {exclude_clause}
         """
         
-        non_fav_params = (cutoff,) + tuple(fav_ints) if fav_ints else (cutoff,)
-        non_fav_raw = conn.execute(non_fav_query, non_fav_params).fetchall()
+        # ✅ Parâmetros na ordem correta: cutoff, revlog_types..., fav_ints...
+        params = (cutoff, *revlog_types, *fav_ints) if fav_ints else (cutoff, *revlog_types)
+        non_fav_raw = conn.execute(query, params).fetchall()
 
-        # Extrai modelos do Anki
+        # Extrai modelos (para fallback de campos quando front_fields/back_fields são None)
         models_map = {}
         try:
             col_data = conn.execute("SELECT models FROM col").fetchone()
@@ -337,6 +311,7 @@ def load_cards_from_anki(
                     mid_val = int(mid_str)
                     fld_names = [f['name'] for f in model.get('flds', [])]
                     qfmt = model.get('tmpls', [{}])[0].get('qfmt', '')
+                    # Regex para extrair nomes de campos usados no template
                     used = set(re.findall(r'\{[\{#^]?\s*(?:[\w]+:)?\s*([^\s{}]+?)\s*[\}]?\}', qfmt))
                     f_idx = [i for i, n in enumerate(fld_names) if n in used] or [0]
                     b_idx = [i for i in range(len(fld_names)) if i not in f_idx] or list(range(len(fld_names)))
@@ -346,31 +321,36 @@ def load_cards_from_anki(
 
         conn.close()
         
-        # Combina e filtra únicos
+        # Combina e deduplica
         raw = fav_raw + non_fav_raw
         seen = set()
-        unique_raw = [(cid, flds, mid) for cid, flds, mid in raw if cid not in seen and not seen.add(cid)]
+        unique = [(cid, flds, mid) for cid, flds, mid in raw if cid not in seen and not seen.add(cid)]
 
-        # Monta lista final
-        MEDIA_DIR = os.path.join(os.path.dirname(ANKI_DB), "collection.media")
+        MEDIA_DIR = os.path.join(os.path.dirname(anki_db_path), "collection.media")
         cards = []
         
-        for cid, flds, mid_val in unique_raw:
+        for cid, flds, mid_val in unique:
             all_f = flds.split("\x1f")
             s = state.get(str(cid), {})
-
-            front_cfg = config.get("FRONT_FIELDS")
-            back_cfg = config.get("BACK_FIELDS")
             
-            if front_cfg is not None:
-                front_idxs = list(range(len(all_f))) if front_cfg == [] else front_cfg
-                back_idxs = list(range(len(all_f))) if (back_cfg is None or back_cfg == []) else back_cfg
+            # ✅ Lógica de campos: service decide, utils executa
+            # - front_fields/back_fields = None → usa fallback do modelo
+            # - front_fields/back_fields = [] → usa [0] (primeiro campo) como fallback seguro
+            # - front_fields/back_fields = [1,2] → usa esses índices exatos
+            if front_fields is not None:
+                f_idx = front_fields if front_fields else [0]
             else:
-                front_idxs, back_idxs = models_map.get(mid_val, ([0], list(range(len(all_f)))))
-
-            front_parts = [all_f[i] for i in front_idxs if 0 <= i < len(all_f) and all_f[i].strip()]
-            back_parts = [all_f[i] for i in back_idxs if 0 <= i < len(all_f) and all_f[i].strip()]
-
+                f_idx = models_map.get(mid_val, ([0], None))[0]
+            
+            if back_fields is not None:
+                b_idx = back_fields if back_fields else list(range(len(all_f)))
+            else:
+                b_idx = models_map.get(mid_val, ([0], list(range(len(all_f)))))[1]
+            
+            # Monta HTML com parsing de mídia
+            front_parts = [all_f[i] for i in f_idx if 0 <= i < len(all_f) and all_f[i].strip()]
+            back_parts = [all_f[i] for i in b_idx if 0 <= i < len(all_f) and all_f[i].strip()]
+            
             front_html = "<br>".join(_parse_anki_media(f, MEDIA_DIR) for f in front_parts)
             back_html = "<br>".join(_parse_anki_media(f, MEDIA_DIR) for f in back_parts)
 
@@ -378,35 +358,17 @@ def load_cards_from_anki(
                 "id": cid,
                 "front": front_html,
                 "back": back_html,
+                # ✅ Estado vem do service, não é calculado aqui
                 "streak": s.get("streak", 0),
                 "errors_recent": s.get("errors_recent", 0),
-                "fav_level": s.get("fav_level", 1) if str(cid) in favs else 1,
-                "fav_consecutive": s.get("fav_consecutive", 0) if str(cid) in favs else 0,
-                "next_due": float(s.get("next_due", 0))  # Garante tipo numérico
+                "fav_level": s.get("fav_level", 1),
+                "fav_consecutive": s.get("fav_consecutive", 0),
+                "next_due": float(s.get("next_due", 0))
             })
 
-        # Filtra por limite diário e agendamento
-        valid_cards = []
-        for c in cards:
-            cid_str = str(c["id"])
-            hits = daily.get("cards_today", {}).get(cid_str, 0)
-            is_fav = cid_str in favs
-            limit = 5 if is_fav else config["MAX_DAILY"]
-            next_due = c.get("next_due", 0)
-            now = time.time()
-            
-            if next_due <= now and hits < limit:
-                valid_cards.append(c)
-
-        # Ordenação final
-        fav_bonus = config["FAVS_PRIORITY"]
-        valid_cards.sort(key=lambda c: (
-            -c["errors_recent"],
-            c.get("streak", 0),
-            -(fav_bonus if str(c["id"]) in favs else 0)
-        ))
-
-        return valid_cards[:config["LIMIT_CARDS"]]
+        # ✅ SEM FILTRO DE next_due, SEM FILTRO DE LIMITE DIÁRIO
+        # O service decide o que é elegível. Aqui só retornamos os brutos.
+        return cards[:limit_cards]  # Apenas limite global de segurança
             
     finally:
         if temp_dir and os.path.exists(temp_dir):
