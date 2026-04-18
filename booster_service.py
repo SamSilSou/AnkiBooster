@@ -12,34 +12,28 @@ MUITO OBRIGADO por usar e por colaborar 😁❣️
 """
 
 import sys, os, time, socket, datetime, json, threading
-from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
+from PyQt6.QtWidgets import QApplication
 from PyQt6.QtQml import QQmlApplicationEngine
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot, QUrl, QTimer, QSize, Qt
 from PyQt6.QtGui import QIcon
+from booster_tray import BoosterTray
 
 from booster_utils import (
     SCRIPT_DIR, BOOSTER_DATA_DIR, STATE_FILE, DAILY_FILE, CONFIG_FILE, CMD_PORT,
-    # REMOVIDO: DEFAULT_CONFIG não existe mais no utils
     load_config, load_json_file, save_json_file,
     log, get_all_favs, toggle_fav, graduate_fav, is_anki_closed, get_anki_db,
-    # REMOVIDO: _get_fav_level_max (service tem FAV_LEVELS próprio)
     _wrap_html, load_cards_from_anki
 )
 
-# VALID_CONFIG_KEYS definido aqui (fonte única da verdade)
 VALID_CONFIG_KEYS = {
     "GLOBAL_CORRECT", "GLOBAL_WRONG", "BUFFER_SIZE", "MAX_DAILY", "REVLOG_DAYS",
     "LIMIT_CARDS", "FAVS_PRIORITY", "REVLOG_TYPES", "FRONT_FIELDS", "BACK_FIELDS",
     "MIN_CARD_DELAY", "HIDE_FURIGANA_ON_HOVER", "FAV_MAX_DAILY", "FAV_LEVEL_THRESHOLDS"
 }
 
-# FAV_LEVELS como dict (service decide a lógica real de graduação)
 FAV_LEVELS = {1: 6, 2: 4, 3: 2}
-
-# Lock mínimo para thread-safety
 _state_lock = threading.Lock()
 
-# Variáveis globais para acesso rápido à config (cache)
 LIMIT_CARDS = GLOBAL_CORRECT = GLOBAL_WRONG = MAX_DAILY = BUFFER_SIZE = FAV_MAX_DAILY = None
 FAVS_PRIORITY = REVLOG_DAYS = REVLOG_TYPES = FAV_BONUS = None
 
@@ -110,7 +104,6 @@ class App:
         self.state = load_json_file(STATE_FILE, {})
         self.daily = load_json_file(DAILY_FILE, {"date": str(datetime.date.today()), "cards_today": {}})
         
-        # Config carregada pelo service (utils não tem DEFAULT_CONFIG)
         self.config = load_config()
         self._apply_config_globals()
         
@@ -151,67 +144,59 @@ class App:
             except Exception as e:
                 log(f"⚠️ Não foi possível ler config: {e}", "WARN")
 
-        self._setup_tray_icon()
+
+        # ✅ Tray inicializada pelo módulo separado (sem chamadas antigas)
         threading.Thread(target=self.tcp_listener, daemon=True).start()
         self.timer = QTimer()
         self.timer.timeout.connect(self.loop)
         self.timer.start(3000)
+
+        # ✅ Conecta sinais da tray aos métodos do service
+        self.tray = BoosterTray()
+        self.tray.start_requested.connect(self._tray_start)
+        self.tray.pause_requested.connect(lambda: self._set_paused(True))
+        self.tray.resume_requested.connect(lambda: self._set_paused(False))
+        self.tray.toggle_window_requested.connect(self._toggle_window_visibility)
+        self.tray.quit_requested.connect(QApplication.quit)
+
     
     def _apply_config_globals(self):
-        """Copia config para variáveis globais de acesso rápido + fallbacks seguros"""
         global LIMIT_CARDS, GLOBAL_CORRECT, GLOBAL_WRONG, MAX_DAILY, BUFFER_SIZE, FAV_MAX_DAILY
         global FAVS_PRIORITY, REVLOG_DAYS, REVLOG_TYPES, FAV_BONUS
         
-        # Fallbacks embutidos (service é a fonte da verdade)
         LIMIT_CARDS = self.config.get("LIMIT_CARDS", 200)
         GLOBAL_CORRECT = self.config.get("GLOBAL_CORRECT", 1200)
         GLOBAL_WRONG = self.config.get("GLOBAL_WRONG", 300)
         MAX_DAILY = self.config.get("MAX_DAILY", 3)
         BUFFER_SIZE = self.config.get("BUFFER_SIZE", 5)
-        FAV_MAX_DAILY = self.config.get("FAV_MAX_DAILY", 5)  # Limite de favoritos
+        FAV_MAX_DAILY = self.config.get("FAV_MAX_DAILY", 5)
         FAVS_PRIORITY = self.config.get("FAVS_PRIORITY", 3)
         REVLOG_DAYS = self.config.get("REVLOG_DAYS", 3)
         REVLOG_TYPES = self.config.get("REVLOG_TYPES", [0, 1, 2, 3])
         FAV_BONUS = FAVS_PRIORITY
     
-    def _setup_tray_icon(self):
-        if not QSystemTrayIcon.isSystemTrayAvailable():
-            log("ℹ️ System tray não disponível", "INFO")
-            return
+    # ✅ MÉTODOS AUXILIARES PARA TRAY (thread-safe)
+    def _toggle_window_visibility(self):
+        """Toggle visibilidade da janela (chamado pelo tray)"""
+        root = self.engine.rootObjects()[0] if self.engine.rootObjects() else None
+        if root:
+            if root.isVisible():
+                root.hide()
+            else:
+                root.show()
+                root.raise_()
+                root.requestActivate()
 
-        icon_path = os.path.join(SCRIPT_DIR, "icon.png")
-        icon = QIcon(icon_path) if os.path.exists(icon_path) else QIcon.fromTheme("anki", QIcon.fromTheme("system-run"))
-        
-        self.tray_icon = QSystemTrayIcon(icon)
-        self.tray_icon.setToolTip("Anki Booster")
-        self.tray_icon.activated.connect(self._tray_activated)
-        
-        # ✅ Cria menu UMA VEZ e armazena como atributo
-        self.tray_menu = QMenu()
-        self.tray_icon.setContextMenu(self.tray_menu)
-        
-        self._build_tray_menu()  # Constrói estado inicial
-        self.tray_icon.show()
-        log("📍 Ícone de tray ativado", "OK")
-
-    def _build_tray_menu(self):
-        # ✅ Limpa ações anteriores (evita cache/duplicação no Qt)
-        self.tray_menu.clear()
-        
-        if not self.allow_showing:
-            action = self.tray_menu.addAction("▶️ Iniciar Booster")
-            action.triggered.connect(self._tray_start)
-        else:
-            label = "⏸️ Pausar" if not self.paused else "▶️ Retomar"
-            action = self.tray_menu.addAction(label)
-            action.triggered.connect(self._tray_toggle_pause)
-            
-        self.tray_menu.addSeparator()
-        quit_action = self.tray_menu.addAction("🚪 Sair")
-        quit_action.triggered.connect(QApplication.quit)
-
+    def _set_paused(self, paused: bool):
+        """Atualiza estado de pausa e refresh da tray (thread-safe)"""
+        self.paused = paused
+        self.tray.set_paused(paused)  # ← Atualiza tray via QTimer (seguro)
+        log(f"⏸️ Booster {'PAUSADO' if paused else 'RETOMADO'} via Tray", "OK" if not paused else "WARN")
+    
     def _tray_start(self):
+        """Inicia o Booster via tray (chamado por sinal do BoosterTray)"""
         today = str(datetime.date.today())
+        
         # Limpeza leve do daily ao virar o dia
         if self.daily.get("date") != today:
             favs = set(get_all_favs())
@@ -222,10 +207,11 @@ class App:
             save_json_file(DAILY_FILE, self.daily)
             log(f"📅 Dia virado: daily.json atualizado", "INFO")
         
+        # Recarrega config e aplica globals
         self.config = load_config()
         self._apply_config_globals()
         
-        # Carrega cards com parâmetros explícitos (utils não decide filtros)
+        # Carrega cards do Anki
         anki_db = get_anki_db()
         if not anki_db:
             log("❌ Não foi possível localizar o banco do Anki", "ERR")
@@ -237,7 +223,6 @@ class App:
                 favs=get_all_favs(),
                 state=self.state,
                 daily=self.daily,
-                # Filtros decididos pelo service:
                 revlog_days=REVLOG_DAYS,
                 revlog_types=REVLOG_TYPES,
                 limit_cards=LIMIT_CARDS,
@@ -245,35 +230,16 @@ class App:
                 back_fields=self.config.get("BACK_FIELDS"),
             )
         
+        # Inicializa buffer e libera exibição
         if self.cards:
             self.prepare_buffer()
             self.allow_showing = True
+            # Atualiza tray de forma thread-safe
+            QTimer.singleShot(0, lambda: self.tray.set_running(True))
             log("▶️ Booster iniciado via Tray", "OK")
         else:
             log("⚠️ Nenhum card disponível para iniciar", "WARN")
-        self._refresh_tray()
 
-    def _tray_toggle_pause(self):
-        self.paused = not self.paused
-        self._refresh_tray()
-        log(f"⏸️ Booster {'PAUSADO' if self.paused else 'RETOMADO'} via Tray", "OK" if not self.paused else "WARN")
-
-    def _tray_activated(self, reason):
-        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
-            root = self.engine.rootObjects()[0] if self.engine.rootObjects() else None
-            if root:
-                if root.isVisible():
-                    root.hide()
-                else:
-                    root.show()
-                    root.raise_()
-                    root.requestActivate()
-
-    def _refresh_tray(self):
-        """Reconstroi o menu refletindo o estado atual."""
-        if hasattr(self, 'tray_menu'):
-            self._build_tray_menu()
-    
     def snooze_current_card(self, minutes: int = 60):
         if not self._current_card:
             log("⚠️ Nenhum card ativo para snooze", "WARN")
@@ -290,10 +256,9 @@ class App:
         self.next_global_show = now
         next_time = datetime.datetime.fromtimestamp(now + snooze_delay).strftime("%H:%M")
         log(f"🌙 Card {cid} adiado por {minutes}min (volta às {next_time})", "OK")
-        self._refresh_tray()
+        # ✅ REMOVIDO: self._refresh_tray() → tray se auto-atualiza via set_paused/set_running
     
     def _handle_tcp_cmd(self, conn, cmd: str):
-        """Processa comandos TCP (mantido formato original de resposta)"""
         if cmd == "START":
             today = str(datetime.date.today())
             if self.daily.get("date") != today:
@@ -352,6 +317,8 @@ class App:
 
                 self.prepare_buffer()
                 self.allow_showing = True
+                #self.tray.set_running(True)  
+                QTimer.singleShot(0, lambda: self.tray.set_running(True))# Atualiza tray após iniciar, de forma threadsafe
                 conn.sendall(b"OK")
                 log("⬆️ OK", "OK")
                 log("-------------------------------------------------")
@@ -377,7 +344,6 @@ class App:
             try:
                 json_str = cmd[len("SAVE_CONFIG:"):]
                 new_cfg = json.loads(json_str)
-                #  Filtra apenas chaves válidas definidas no service
                 filtered_cfg = {k: v for k, v in new_cfg.items() if k in VALID_CONFIG_KEYS}
                 current_cfg = load_config()
                 final_cfg = {**current_cfg, **filtered_cfg}
@@ -403,10 +369,12 @@ class App:
                 conn.sendall(b"SAVE_ERROR")
         elif cmd == "TOGGLE_PAUSE":
             self.paused = not self.paused
+            #self.tray.set_paused(self.paused) 
+            QTimer.singleShot(0, lambda: self.tray.set_paused(self.paused)) # Atualiza tray via QTimer (thread-safe)
             estado = "PAUSED" if self.paused else "RUNNING"
             log(f"⏸️ Booster {'PAUSADO' if self.paused else 'RETOMADO'}!", "WARN" if self.paused else "OK")
             conn.sendall(estado.encode())
-            self._refresh_tray()
+            # ✅ REMOVIDO: self._refresh_tray() → tray se auto-atualiza
         elif cmd == "GET_CONFIG":
             conn.sendall(json.dumps(self.config).encode())
             log("⬆️ Config enviada via TCP", "INFO")
@@ -414,7 +382,6 @@ class App:
             conn.sendall(b"UNKNOWN_CMD")
 
     def tcp_listener(self):
-        """Listener TCP - mantido formato original (recv único por comando)"""
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("127.0.0.1", CMD_PORT))
@@ -445,7 +412,6 @@ class App:
         self.pool_cards = self.pool_cards[safe_buffer:]
         log(f"📦 Buffer {len(self.active_cards)} | Pool {len(self.pool_cards)}")
 
-
     def _calculate_priority(self, card: dict, favs_set: set) -> tuple:
         cid_str = str(card["id"])
         fav_bonus = FAV_BONUS if cid_str in favs_set else 0
@@ -459,12 +425,10 @@ class App:
         if not self.allow_showing or self.reviewing:
             return
         
-        # Cópia leve para evitar leitura durante modificação pelo TCP
         with _state_lock:
             active_cards_copy = self.active_cards.copy()
             daily_copy = {"cards_today": dict(self.daily.get("cards_today", {}))}
         
-        # Service filtra por next_due (utils não decide isso)
         available_cards = [c for c in active_cards_copy if c.get("next_due", 0) <= now]
         
         if not available_cards and active_cards_copy:
@@ -500,13 +464,12 @@ class App:
         consecutive = card.get("fav_consecutive", 0) if starred else 0
         log(f"🎯 Card selecionado: {card['id']} | fav={starred} | errors={card['errors_recent']} | streak={card.get('streak',0)}", "OK")
         
-        # _wrap_html recebe thresholds do service + flag de furigana
         front_wrapped = _wrap_html(
             card["front"],
             starred=starred,
             level=level,
             consecutive=consecutive,
-            fav_thresholds=FAV_LEVELS,  # DO SERVICE
+            fav_thresholds=FAV_LEVELS,
             hide_furigana=self.config.get("HIDE_FURIGANA_ON_HOVER", False)
         )
         back_wrapped = _wrap_html(
@@ -527,7 +490,6 @@ class App:
         if favs_set is None:
             favs_set = set(get_all_favs())
         
-        # Usa FAV_MAX_DAILY do service (não hardcoded)
         max_hits = FAV_MAX_DAILY if cid in favs_set else MAX_DAILY
         count = self.daily["cards_today"].get(cid, 0)
         is_fav = cid in favs_set
@@ -558,11 +520,9 @@ class App:
             card_delay = GLOBAL_CORRECT
             log(f"⚠️ Nível desconhecido '{level}', usando delay padrão", "WARN")
 
-        # Progresso de favoritos
         if is_fav and level != "Errei":
             card["fav_consecutive"] = card.get("fav_consecutive", 0) + 1
             current_level = card.get("fav_level", 1)
-            # Usa FAV_LEVELS do service (fonte única da verdade)
             required = FAV_LEVELS.get(current_level, 5)
             if card["fav_consecutive"] >= required:
                 if current_level < 3:
@@ -587,14 +547,12 @@ class App:
         log(f"⏳ Próxima exibição do card em {int(card_delay)}s ({next_time})")
         log("-------------------------------------------------")
 
-        # Persiste estado
         self.daily["cards_today"][cid] = count
         save_json_file(DAILY_FILE, self.daily)
         self.state[cid] = card
         save_json_file(STATE_FILE, self.state)
         self.last_card_correct = level != "Errei"
 
-        # Rotação do buffer
         try:
             with _state_lock:
                 idx = next(i for i, c in enumerate(self.active_cards) if c["id"] == card["id"])
@@ -610,7 +568,6 @@ class App:
         except StopIteration:
             pass
 
-        # Mantido: Lógica original de ritmo (GLOBAL_CORRECT como teto)
         self.next_global_show = min(now + GLOBAL_CORRECT, now + card_delay)
         delay_real = int(self.next_global_show - now)
         next_hr = datetime.datetime.fromtimestamp(self.next_global_show).strftime("%H:%M:%S")
@@ -637,6 +594,6 @@ class App:
 if __name__ == "__main__":
     os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --no-sandbox --disable-software-rasterizer --allow-file-access-from-files --allow-file-access"
     app = QApplication(sys.argv)
-    app_instance = App()  # garante que config foi aplicada
+    app_instance = App()
     log(f"🚀 Booster rodando | FAVS_PRIORITY: {FAV_BONUS} | UI: QML")
     sys.exit(app.exec())
