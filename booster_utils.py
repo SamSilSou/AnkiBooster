@@ -52,14 +52,26 @@ DB_FILE = os.path.join(BOOSTER_DATA_DIR, "anki_booster.db")
 CONFIG_FILE = os.path.join(BOOSTER_DATA_DIR, "anki_booster_config.json")
 CMD_PORT = 8894
 BASE_ANKI = get_anki_base_path()
+_logger_ref = None
 
 # ───────────────── LOG UTILS ─────────────────
+
+def set_logger(logger):
+    """Injeta referência do logger (chamado pelo service no init)"""
+    global _logger_ref
+    _logger_ref = logger
+
 def log(msg: str, level: str = "INFO") -> None:
-    """Log colorido com emoji e timestamp"""
-    colors = {"INFO": "\033[94m", "OK": "\033[92m", "ERR": "\033[91m", "WARN": "\033[93m"}
-    emojis = {"INFO": "📘", "OK": "✅", "ERR": "❌", "WARN": "⚠️"}
-    now = datetime.datetime.now().strftime("%H:%M:%S")
-    print(f"{colors[level]}{emojis[level]} [{now}] {msg}\033[0m", flush=True)
+    """Log wrapper que usa logger modular se disponível"""
+    # Se tiver logger injetado, usa ele (buffer + terminal)
+    if _logger_ref and hasattr(_logger_ref, 'log'):
+        _logger_ref.log(msg, level)
+    else:
+        # Fallback: loga só no terminal (para imports isolados)
+        colors = {"INFO": "\033[94m", "OK": "\033[92m", "ERR": "\033[91m", "WARN": "\033[93m"}
+        emojis = {"INFO": "📘", "OK": "✅", "ERR": "❌", "WARN": "⚠️"}
+        now = datetime.datetime.now().strftime("%H:%M:%S")
+        print(f"{colors[level]}{emojis[level]} [{now}] {msg}\033[0m", flush=True)
 
 # ───────────────── JSON UTILS ─────────────────
 def load_json_file(path: str, default: Any) -> Any:

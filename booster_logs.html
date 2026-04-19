@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anki Booster Logs</title>
+    <style>
+        :root {
+            --bg: #0f1115; --surface: #1a1d24; --text: #e6e9ef;
+            --info: #60a5fa; --ok: #34d399; --warn: #fbbf24; --err: #f87171;
+            --border: #2a2e37;
+        }
+        @media (prefers-color-scheme: light) {
+            :root { --bg: #f8fafc; --surface: #ffffff; --text: #1e293b; --border: #e2e8f0; }
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; padding: 20px; }
+        .container { max-width: 850px; margin: 0 auto; }
+        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid var(--border); }
+        h1 { font-size: 1.4rem; font-weight: 600; }
+        .controls button { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 6px 12px; border-radius: 6px; cursor: pointer; transition: 0.2s; margin-left: 8px; font-size: 0.9rem; }
+        .controls button:hover { background: var(--border); }
+        #log-container { max-height: 70vh; overflow-y: auto; scroll-behavior: smooth; }
+        .log-entry { display: flex; gap: 10px; padding: 8px 12px; margin-bottom: 6px; background: var(--surface); border-radius: 8px; border-left: 3px solid transparent; animation: slideIn 0.25s ease; }
+        .log-entry.INFO { border-left-color: var(--info); }
+        .log-entry.OK { border-left-color: var(--ok); }
+        .log-entry.WARN { border-left-color: var(--warn); }
+        .log-entry.ERR { border-left-color: var(--err); }
+        .time { font-family: ui-monospace, monospace; font-size: 0.8rem; opacity: 0.6; min-width: 70px; }
+        .level { font-weight: 600; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; min-width: 40px; text-align: center; }
+        .level.INFO { color: var(--info); background: rgba(96,165,250,0.15); }
+        .level.OK { color: var(--ok); background: rgba(52,211,153,0.15); }
+        .level.WARN { color: var(--warn); background: rgba(251,191,36,0.15); }
+        .level.ERR { color: var(--err); background: rgba(248,113,113,0.15); }
+        .msg { font-family: ui-monospace, monospace; font-size: 0.85rem; word-break: break-all; flex: 1; }
+        @keyframes slideIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+        .empty { text-align: center; padding: 40px; opacity: 0.5; font-style: italic; }
+        ::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📓 Anki Booster Logs</h1>
+            <div class="controls">
+                <button id="pauseBtn" onclick="togglePause()">⏸️ Pausar</button>
+                <button onclick="clearLogs()">🗑️ Limpar</button>
+                <button onclick="location.reload()">🔄 Atualizar</button>
+            </div>
+        </header>
+        <div id="log-container"></div>
+    </div>
+    <script>
+        let paused = false;
+        let lastCount = 0;
+        const container = document.getElementById('log-container');
+        const API = 'http://127.0.0.1:8895/api/logs';
+
+        async function fetchLogs() {
+            if (paused) return;
+            try {
+                const res = await fetch(API);
+                if (!res.ok) throw new Error('Offline');
+                const logs = await res.json();
+                renderNew(logs);
+                lastCount = logs.length;
+            } catch (e) {
+                if (!container.querySelector('.empty')) {
+                    container.innerHTML = '<div class="empty">🔌 Serviço offline. Inicie o Booster.</div>';
+                }
+            }
+        }
+
+        function renderNew(logs) {
+            if (!logs.length) {
+                if (!container.querySelector('.empty')) {
+                    container.innerHTML = '<div class="empty">✨ Aguardando logs...</div>';
+                }
+                return;
+            }
+            const newLogs = logs.slice(lastCount);
+            newLogs.forEach(log => {
+                const el = document.createElement('div');
+                el.className = `log-entry ${log.level}`;
+                el.innerHTML = `
+                    <span class="time">${log.timestamp}</span>
+                    <span class="level ${log.level}">${log.level}</span>
+                    <span class="msg">${escapeHtml(log.message)}</span>
+                `;
+                container.appendChild(el);
+            });
+            // Auto-scroll suave para o final
+            if (newLogs.length > 0) {
+                container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+            }
+            // Mantém no máximo 200 entradas na tela (performance)
+            while (container.children.length > 200) {
+                container.removeChild(container.firstChild);
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function togglePause() {
+            paused = !paused;
+            document.getElementById('pauseBtn').textContent = paused ? '▶️ Retomar' : '⏸️ Pausar';
+        }
+
+        function clearLogs() {
+            container.innerHTML = '';
+            lastCount = 0;
+            fetchLogs();
+        }
+
+        // Inicia
+        fetchLogs();
+        setInterval(fetchLogs, 1500);  // Polling a cada 1.5s
+    </script>
+</body>
+</html>

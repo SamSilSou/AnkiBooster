@@ -14,10 +14,10 @@ Window {
     maximumWidth: 440
     maximumHeight: 320
     flags: Qt.WindowStaysOnTopHint | Qt.CustomizeWindowHint
-    color: "transparent"
+    color: SystemPalette.window
 
     property int slideDirection: 1
-    property bool isAnimating: false
+    property bool isAnimating: falses
 
     property var theme: {
         "bg": "#251b1a",

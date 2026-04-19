@@ -17,6 +17,8 @@ from PyQt6.QtQml import QQmlApplicationEngine
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot, QUrl, QTimer, QSize, Qt
 from PyQt6.QtGui import QIcon
 from booster_tray import BoosterTray
+from booster_logger import BoosterLogger
+from booster_utils import set_logger
 
 from booster_utils import (
     SCRIPT_DIR, BOOSTER_DATA_DIR, STATE_FILE, DAILY_FILE, CONFIG_FILE, CMD_PORT,
@@ -37,6 +39,14 @@ _state_lock = threading.Lock()
 LIMIT_CARDS = GLOBAL_CORRECT = GLOBAL_WRONG = MAX_DAILY = BUFFER_SIZE = FAV_MAX_DAILY = None
 FAVS_PRIORITY = REVLOG_DAYS = REVLOG_TYPES = FAV_BONUS = None
 
+# Força Qt a usar o tema do sistema (GTK3 no Linux, Windows10/11 no Win)
+if sys.platform == "linux":
+    os.environ.setdefault("QT_QPA_PLATFORMTHEME", "gtk3")
+elif sys.platform == "win32":
+    os.environ.setdefault("QT_QPA_PLATFORMTHEME", "windows10")
+
+# Habilita detecção de modo escuro/claro do sistema (Qt 6.5+)
+os.environ.setdefault("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1")
 
 class Bridge(QObject):
     show = pyqtSignal(str)
@@ -112,15 +122,25 @@ class App:
         self.allow_showing = False
         self.paused = False
         self._current_card = None
+        
+        # Inicializa logger modular
+        self.logger = BoosterLogger(
+            buffer_max=200,
+            port=8895,
+            script_dir=SCRIPT_DIR
+        )
+        self.logger.start_server(daemon=True)
+        set_logger(self.logger)
 
         self.bridge = Bridge(self)
+
         self.engine = QQmlApplicationEngine()
         self.engine.rootContext().setContextProperty("bridge", self.bridge)
         qml_path = os.path.join(SCRIPT_DIR, "theme.qml")
         self.engine.load(QUrl.fromLocalFile(qml_path))
         
         if not self.engine.rootObjects():
-            log("❌ Falha ao carregar theme.qml", "ERR")
+            self.logger.log("❌ Falha ao carregar theme.qml", "ERR")
             sys.exit(1)
         
         root = self.engine.rootObjects()[0]
@@ -140,10 +160,9 @@ class App:
             try:
                 with open(CONFIG_FILE, encoding='utf-8') as f:
                     content = f.read()
-                    log(f"📄 Config atual: {content[:200]}...", "INFO")
+                    self.logger.log(f"📄 Config atual: {content[:200]}...", "INFO")
             except Exception as e:
-                log(f"⚠️ Não foi possível ler config: {e}", "WARN")
-
+                self.logger.log(f"⚠️ Não foi possível ler config: {e}", "WARN")
 
         # ✅ Tray inicializada pelo módulo separado (sem chamadas antigas)
         threading.Thread(target=self.tcp_listener, daemon=True).start()
@@ -158,20 +177,28 @@ class App:
         self.tray.resume_requested.connect(lambda: self._set_paused(False))
         self.tray.toggle_window_requested.connect(self._toggle_window_visibility)
         self.tray.quit_requested.connect(QApplication.quit)
-
     
     def _apply_config_globals(self):
         global LIMIT_CARDS, GLOBAL_CORRECT, GLOBAL_WRONG, MAX_DAILY, BUFFER_SIZE, FAV_MAX_DAILY
         global FAVS_PRIORITY, REVLOG_DAYS, REVLOG_TYPES, FAV_BONUS
         
-        LIMIT_CARDS = self.config.get("LIMIT_CARDS", 200)
-        GLOBAL_CORRECT = self.config.get("GLOBAL_CORRECT", 1200)
-        GLOBAL_WRONG = self.config.get("GLOBAL_WRONG", 300)
-        MAX_DAILY = self.config.get("MAX_DAILY", 3)
-        BUFFER_SIZE = self.config.get("BUFFER_SIZE", 5)
-        FAV_MAX_DAILY = self.config.get("FAV_MAX_DAILY", 5)
-        FAVS_PRIORITY = self.config.get("FAVS_PRIORITY", 3)
-        REVLOG_DAYS = self.config.get("REVLOG_DAYS", 3)
+        # ✅ CORREÇÃO 3: Validação mínima de tipos (previne bugs silenciosos)
+        try:
+            LIMIT_CARDS = max(1, int(self.config.get("LIMIT_CARDS", 200)))
+            GLOBAL_CORRECT = max(60, int(self.config.get("GLOBAL_CORRECT", 1200)))  # mínimo 1min
+            GLOBAL_WRONG = max(30, int(self.config.get("GLOBAL_WRONG", 300)))
+            MAX_DAILY = max(1, int(self.config.get("MAX_DAILY", 3)))
+            BUFFER_SIZE = max(1, int(self.config.get("BUFFER_SIZE", 5)))
+            FAV_MAX_DAILY = max(1, int(self.config.get("FAV_MAX_DAILY", 5)))
+            FAVS_PRIORITY = max(0, int(self.config.get("FAVS_PRIORITY", 3)))
+            REVLOG_DAYS = max(0, int(self.config.get("REVLOG_DAYS", 3)))
+        except (ValueError, TypeError):
+            self.logger.log("⚠️ Config com valor inválido, usando fallback", "WARN")
+            # Fallback para valores padrão
+            LIMIT_CARDS, GLOBAL_CORRECT, GLOBAL_WRONG = 200, 1200, 300
+            MAX_DAILY, BUFFER_SIZE, FAV_MAX_DAILY = 3, 5, 5
+            FAVS_PRIORITY, REVLOG_DAYS = 3, 3
+            
         REVLOG_TYPES = self.config.get("REVLOG_TYPES", [0, 1, 2, 3])
         FAV_BONUS = FAVS_PRIORITY
     
@@ -190,14 +217,13 @@ class App:
     def _set_paused(self, paused: bool):
         """Atualiza estado de pausa e refresh da tray (thread-safe)"""
         self.paused = paused
-        self.tray.set_paused(paused)  # ← Atualiza tray via QTimer (seguro)
-        log(f"⏸️ Booster {'PAUSADO' if paused else 'RETOMADO'} via Tray", "OK" if not paused else "WARN")
+        self.tray.set_paused(paused)
+        self.logger.log(f"⏸️ Booster {'PAUSADO' if paused else 'RETOMADO'} via Tray", "OK" if not paused else "WARN")
     
     def _tray_start(self):
         """Inicia o Booster via tray (chamado por sinal do BoosterTray)"""
         today = str(datetime.date.today())
         
-        # Limpeza leve do daily ao virar o dia
         if self.daily.get("date") != today:
             favs = set(get_all_favs())
             self.daily = {
@@ -205,16 +231,14 @@ class App:
                 "cards_today": {cid: hits for cid, hits in self.daily.get("cards_today", {}).items() if cid in favs}
             }
             save_json_file(DAILY_FILE, self.daily)
-            log(f"📅 Dia virado: daily.json atualizado", "INFO")
+            self.logger.log(f"📅 Dia virado: daily.json atualizado", "INFO")
         
-        # Recarrega config e aplica globals
         self.config = load_config()
         self._apply_config_globals()
         
-        # Carrega cards do Anki
         anki_db = get_anki_db()
         if not anki_db:
-            log("❌ Não foi possível localizar o banco do Anki", "ERR")
+            self.logger.log("❌ Não foi possível localizar o banco do Anki", "ERR")
             return
             
         with _state_lock:
@@ -230,19 +254,17 @@ class App:
                 back_fields=self.config.get("BACK_FIELDS"),
             )
         
-        # Inicializa buffer e libera exibição
         if self.cards:
             self.prepare_buffer()
             self.allow_showing = True
-            # Atualiza tray de forma thread-safe
             QTimer.singleShot(0, lambda: self.tray.set_running(True))
-            log("▶️ Booster iniciado via Tray", "OK")
+            self.logger.log("▶️ Booster iniciado via Tray", "OK")
         else:
-            log("⚠️ Nenhum card disponível para iniciar", "WARN")
+            self.logger.log("⚠️ Nenhum card disponível para iniciar", "WARN")
 
     def snooze_current_card(self, minutes: int = 60):
         if not self._current_card:
-            log("⚠️ Nenhum card ativo para snooze", "WARN")
+            self.logger.log("⚠️ Nenhum card ativo para snooze", "WARN")
             return
         cid = str(self._current_card["id"])
         now = time.time()
@@ -255,8 +277,7 @@ class App:
         self._current_card = None
         self.next_global_show = now
         next_time = datetime.datetime.fromtimestamp(now + snooze_delay).strftime("%H:%M")
-        log(f"🌙 Card {cid} adiado por {minutes}min (volta às {next_time})", "OK")
-        # ✅ REMOVIDO: self._refresh_tray() → tray se auto-atualiza via set_paused/set_running
+        self.logger.log(f"🌙 Card {cid} adiado por {minutes}min (volta às {next_time})", "OK")
     
     def _handle_tcp_cmd(self, conn, cmd: str):
         if cmd == "START":
@@ -271,7 +292,7 @@ class App:
             
             self.config = load_config()
             self._apply_config_globals()
-            log(f"🔍 Carregando cards (LIMIT_CARDS={LIMIT_CARDS}, FAVS_PRIORITY={FAVS_PRIORITY})...", "INFO")
+            self.logger.log(f"🔍 Carregando cards (LIMIT_CARDS={LIMIT_CARDS}, FAVS_PRIORITY={FAVS_PRIORITY})...", "INFO")
             
             anki_db = get_anki_db()
             if not anki_db:
@@ -293,7 +314,7 @@ class App:
             
             if self.cards:
                 favs_in_cards = [c for c in self.cards if str(c["id"]) in get_all_favs()]
-                log(f"✅ {len(self.cards)} cards carregados | {len(favs_in_cards)} são favoritos", "OK")
+                self.logger.log(f"✅ {len(self.cards)} cards carregados | {len(favs_in_cards)} são favoritos", "OK")
                 
                 all_favs = get_all_favs()
                 loaded_fav_ids = {str(c["id"]) for c in self.cards if str(c["id"]) in all_favs}
@@ -313,15 +334,14 @@ class App:
                             reasons.append(f"{cid} (limite diário: {hits}/{FAV_MAX_DAILY})")
                         else:
                             reasons.append(f"{cid} (filtro)")
-                    log(f"⏳ {len(filtered_favs)} favoritos agendados/filtrados: {', '.join(reasons)}", "INFO")
+                    self.logger.log(f"⏳ {len(filtered_favs)} favoritos agendados/filtrados: {', '.join(reasons)}", "INFO")
 
                 self.prepare_buffer()
                 self.allow_showing = True
-                #self.tray.set_running(True)  
-                QTimer.singleShot(0, lambda: self.tray.set_running(True))# Atualiza tray após iniciar, de forma threadsafe
+                QTimer.singleShot(0, lambda: self.tray.set_running(True))
                 conn.sendall(b"OK")
-                log("⬆️ OK", "OK")
-                log("-------------------------------------------------")
+                self.logger.log("⬆️ OK", "OK")
+                self.logger.log("-------------------------------------------------")
             else:
                 if not is_anki_closed():
                     conn.sendall(b"ANKI_OPEN")
@@ -338,7 +358,7 @@ class App:
                 favs = get_all_favs()
                 conn.sendall(json.dumps(favs).encode())
             except Exception as e:
-                log(f"❌ Erro ao toggle fav: {e}", "ERR")
+                self.logger.log(f"❌ Erro ao toggle fav: {e}", "ERR")
                 conn.sendall(b"[]")
         elif cmd.startswith("SAVE_CONFIG:"):
             try:
@@ -349,35 +369,33 @@ class App:
                 final_cfg = {**current_cfg, **filtered_cfg}
                 with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                     json.dump(final_cfg, f, indent=2, ensure_ascii=False)
-                log("------------------------------------------------", "INFO")
-                log("📋 Config salva:", "INFO")
+                self.logger.log("------------------------------------------------", "INFO")
+                self.logger.log("📋 Config salva:", "INFO")
                 for key in VALID_CONFIG_KEYS:
                     if key in filtered_cfg:
                         old_val = current_cfg.get(key)
                         new_val = final_cfg[key]
-                        log(f"   {key}: {old_val} → {new_val} ✅", "OK")
+                        self.logger.log(f"   {key}: {old_val} → {new_val} ✅", "OK")
                 self.config = final_cfg
                 self._apply_config_globals()
                 conn.sendall(b"OK")
-                log("⬆️ Config recebida e salva via TCP", "OK")
-                log("-------------------------------------------------", "INFO")
+                self.logger.log("⬆️ Config recebida e salva via TCP", "OK")
+                self.logger.log("-------------------------------------------------", "INFO")
             except json.JSONDecodeError as e:
-                log(f"❌ JSON inválido: {e}", "ERR")
+                self.logger.log(f"❌ JSON inválido: {e}", "ERR")
                 conn.sendall(b"INVALID_JSON")
             except Exception as e:
-                log(f"❌ Erro ao salvar config: {e}", "ERR")
+                self.logger.log(f"❌ Erro ao salvar config: {e}", "ERR")
                 conn.sendall(b"SAVE_ERROR")
         elif cmd == "TOGGLE_PAUSE":
             self.paused = not self.paused
-            #self.tray.set_paused(self.paused) 
-            QTimer.singleShot(0, lambda: self.tray.set_paused(self.paused)) # Atualiza tray via QTimer (thread-safe)
+            QTimer.singleShot(0, lambda: self.tray.set_paused(self.paused))
             estado = "PAUSED" if self.paused else "RUNNING"
-            log(f"⏸️ Booster {'PAUSADO' if self.paused else 'RETOMADO'}!", "WARN" if self.paused else "OK")
+            self.logger.log(f"⏸️ Booster {'PAUSADO' if self.paused else 'RETOMADO'}!", "WARN" if self.paused else "OK")
             conn.sendall(estado.encode())
-            # ✅ REMOVIDO: self._refresh_tray() → tray se auto-atualiza
         elif cmd == "GET_CONFIG":
             conn.sendall(json.dumps(self.config).encode())
-            log("⬆️ Config enviada via TCP", "INFO")
+            self.logger.log("⬆️ Config enviada via TCP", "INFO")
         else:
             conn.sendall(b"UNKNOWN_CMD")
 
@@ -386,8 +404,8 @@ class App:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("127.0.0.1", CMD_PORT))
         sock.listen(5)
-        log("-------------------------------------------------")
-        log("📡 TCP pronto")
+        self.logger.log("-------------------------------------------------")
+        self.logger.log("📡 TCP pronto")
 
         while True:
             try:
@@ -400,7 +418,7 @@ class App:
                         continue
                     if not cmd:
                         continue
-                    log(f"⬇️ {cmd}")
+                    self.logger.log(f"⬇️ {cmd}")
                     self._handle_tcp_cmd(conn, cmd)
             except OSError:
                 break
@@ -410,7 +428,7 @@ class App:
         self.pool_cards = self.cards.copy()
         self.active_cards = self.pool_cards[:safe_buffer]
         self.pool_cards = self.pool_cards[safe_buffer:]
-        log(f"📦 Buffer {len(self.active_cards)} | Pool {len(self.pool_cards)}")
+        self.logger.log(f"📦 Buffer {len(self.active_cards)} | Pool {len(self.pool_cards)}")
 
     def _calculate_priority(self, card: dict, favs_set: set) -> tuple:
         cid_str = str(card["id"])
@@ -429,22 +447,28 @@ class App:
             active_cards_copy = self.active_cards.copy()
             daily_copy = {"cards_today": dict(self.daily.get("cards_today", {}))}
         
-        available_cards = [c for c in active_cards_copy if c.get("next_due", 0) <= now]
+        # ✅ CORREÇÃO 1: favs_set computado UMA VEZ no início do loop
+        favs_set = set(get_all_favs())
+        
+        available_cards = [
+            c for c in active_cards_copy 
+            if c.get("next_due", 0) <= now 
+            and daily_copy["cards_today"].get(str(c["id"]), 0) < (FAV_MAX_DAILY if str(c["id"]) in favs_set else MAX_DAILY)
+        ]
         
         if not available_cards and active_cards_copy:
             blocked = [c for c in active_cards_copy if c.get("next_due", 0) > now]
-            log(f"⚠️ {len(blocked)}/{len(active_cards_copy)} cards bloqueados por next_due", "WARN")
+            self.logger.log(f"⚠️ {len(blocked)}/{len(active_cards_copy)} cards bloqueados por next_due", "WARN")
             if blocked:
                 sample = blocked[0]
-                log(f"🔍 Exemplo: CID {sample['id']} | next_due={sample['next_due']:.0f} | agora={now:.0f} | falta={(sample['next_due']-now)/60:.1f}min", "INFO")
+                self.logger.log(f"🔍 Exemplo: CID {sample['id']} | next_due={sample['next_due']:.0f} | agora={now:.0f} | falta={(sample['next_due']-now)/60:.1f}min", "INFO")
             return
         if not available_cards:
             return
             
-        favs_set = set(get_all_favs())
-        favs_available = [c for c in available_cards if str(c["id"]) in favs_set]
+        favs_available = [c for c in available_cards if str(c["id"]) in favs_set]  # ← reusa favs_set
         if favs_available:
-            log(f"🔍 {len(favs_available)} favoritos disponíveis agora", "INFO")
+            self.logger.log(f"🔍 {len(favs_available)} favoritos disponíveis agora", "INFO")
             for c in favs_available[:2]:
                 cid = str(c["id"])
                 errors = c.get("errors_recent", 0)
@@ -452,7 +476,7 @@ class App:
                 fav_bonus = FAV_BONUS if cid in favs_set else 0
                 priority = (-errors, streak, -fav_bonus)
                 hits = daily_copy["cards_today"].get(cid, 0)
-                log(f"   📍 {cid} | errors={errors} | streak={streak} | fav_bonus={fav_bonus} | priority={priority} | hits={hits}/{FAV_MAX_DAILY}", "INFO")
+                self.logger.log(f"   📍 {cid} | errors={errors} | streak={streak} | fav_bonus={fav_bonus} | priority={priority} | hits={hits}/{FAV_MAX_DAILY}", "INFO")
         
         card = min(available_cards, key=lambda c: self._calculate_priority(c, favs_set))
 
@@ -462,7 +486,7 @@ class App:
         starred = str(card["id"]) in favs_set
         level = card.get("fav_level", 1) if starred else 1
         consecutive = card.get("fav_consecutive", 0) if starred else 0
-        log(f"🎯 Card selecionado: {card['id']} | fav={starred} | errors={card['errors_recent']} | streak={card.get('streak',0)}", "OK")
+        self.logger.log(f"🎯 Card selecionado: {card['id']} | fav={starred} | errors={card['errors_recent']} | streak={card.get('streak',0)}", "OK")
         
         front_wrapped = _wrap_html(
             card["front"],
@@ -485,7 +509,7 @@ class App:
     def process_card(self, card: dict, level: str, favs_set: set = None):
         now = time.time()
         cid = str(card["id"])
-        log(f"🧠 Processando {cid} com nível '{level}'")
+        self.logger.log(f"🧠 Processando {cid} com nível '{level}'")
 
         if favs_set is None:
             favs_set = set(get_all_favs())
@@ -499,26 +523,26 @@ class App:
             card["streak"] += 2
             card["errors_recent"] = max(0, card["errors_recent"] - 2)
             card_delay = GLOBAL_CORRECT * 5 - 15
-            log(f"✅ Fácil: streak +2, erros -2, delay = {card_delay/60:.1f}min", "OK")
+            self.logger.log(f"✅ Fácil: streak +2, erros -2, delay = {card_delay/60:.1f}min", "OK")
         elif level == "Ok":
             count += 1
             card["streak"] += 2
             card["errors_recent"] = max(0, card["errors_recent"] - 1)
             card_delay = GLOBAL_CORRECT * 2.5 - 10
-            log(f"👍 Ok: streak +2, erros -1, delay = {card_delay/60:.1f}min", "OK")
+            self.logger.log(f"👍 Ok: streak +2, erros -1, delay = {card_delay/60:.1f}min", "OK")
         elif level == "Difícil":
             count += 1
             card["streak"] += 1
             card_delay = GLOBAL_CORRECT * 1 - 18
-            log(f"😢 Difícil: streak +1, delay = {card_delay/60:.1f}min", "INFO")
+            self.logger.log(f"😢 Difícil: streak +1, delay = {card_delay/60:.1f}min", "INFO")
         elif level == "Errei":
             card["streak"] = 0
             card["errors_recent"] += 1
             card_delay = GLOBAL_WRONG
-            log(f"💀 Errei: streak reset, erros +1, delay = {card_delay/60:.1f}min", "WARN")
+            self.logger.log(f"💀 Errei: streak reset, erros +1, delay = {card_delay/60:.1f}min", "WARN")
         else:
             card_delay = GLOBAL_CORRECT
-            log(f"⚠️ Nível desconhecido '{level}', usando delay padrão", "WARN")
+            self.logger.log(f"⚠️ Nível desconhecido '{level}', usando delay padrão", "WARN")
 
         if is_fav and level != "Errei":
             card["fav_consecutive"] = card.get("fav_consecutive", 0) + 1
@@ -528,24 +552,23 @@ class App:
                 if current_level < 3:
                     card["fav_level"] = current_level + 1
                     card["fav_consecutive"] = 0
-                    log(f"🆙 Favorito subiu para N{card['fav_level']}!", "OK")
+                    self.logger.log(f"🆙 Favorito subiu para N{card['fav_level']}!", "OK")
                 else:
                     graduate_fav(cid)
                     card["fav_level"] = 1
                     card["fav_consecutive"] = 0
-                    log(f"🏆 Favorito N3 COMPLETO! Graduação realizada.", "OK")
+                    self.logger.log(f"🏆 Favorito N3 COMPLETO! Graduação realizada.", "OK")
             else:
-                log(f"📈 Favorito N{current_level}: {card['fav_consecutive']}/{required}")
+                self.logger.log(f"📈 Favorito N{current_level}: {card['fav_consecutive']}/{required}")
         elif is_fav and level == "Errei":
             old_level = card.get("fav_level", 1)
             card["fav_level"] = 1
             card["fav_consecutive"] = 0
-            log(f"🔙 Favorito resetado do N{old_level} para N1", "WARN")
+            self.logger.log(f"🔙 Favorito resetado do N{old_level} para N1", "WARN")
 
         card["next_due"] = float(now + card_delay)
         next_time = datetime.datetime.fromtimestamp(card["next_due"]).strftime("%H:%M:%S")
-        log(f"⏳ Próxima exibição do card em {int(card_delay)}s ({next_time})")
-        log("-------------------------------------------------")
+        self.logger.log(f"⏳ Próxima exibição do card em {int(card_delay)}s ({next_time})")
 
         self.daily["cards_today"][cid] = count
         save_json_file(DAILY_FILE, self.daily)
@@ -553,26 +576,26 @@ class App:
         save_json_file(STATE_FILE, self.state)
         self.last_card_correct = level != "Errei"
 
-        try:
-            with _state_lock:
-                idx = next(i for i, c in enumerate(self.active_cards) if c["id"] == card["id"])
+        # ✅ CORREÇÃO 2: next(..., None) mais seguro e legível
+        with _state_lock:
+            idx = next((i for i, c in enumerate(self.active_cards) if c["id"] == card["id"]), None)
+            if idx is not None:  # ← Mais claro que try/except StopIteration
                 if count >= max_hits:
-                    log(f"🚫 Saiu ({count}/{max_hits})", "WARN")
+                    self.logger.log(f"🚫 Saiu ({count}/{max_hits})", "WARN")
+                    self.logger.log("-------------------------------------------------")
                     self.active_cards.pop(idx)
                     if self.pool_cards:
                         self.active_cards.append(self.pool_cards.pop(0))
                 else:
-                    log(f"🔄 Rotação ({count}/{max_hits})")
-                    log("-------------------------------------------------")
+                    self.logger.log(f"🔄 Rotação ({count}/{max_hits})")
+                    self.logger.log("-------------------------------------------------")
                     self.active_cards.append(self.active_cards.pop(idx))
-        except StopIteration:
-            pass
 
         self.next_global_show = min(now + GLOBAL_CORRECT, now + card_delay)
         delay_real = int(self.next_global_show - now)
         next_hr = datetime.datetime.fromtimestamp(self.next_global_show).strftime("%H:%M:%S")
         source = "card_delay" if card_delay < GLOBAL_CORRECT else "GLOBAL_CORRECT"
-        log(f"⏳ Ritmo global: próximo card em {delay_real}s ({next_hr}) [fonte: {source}]")
+        self.logger.log(f"⏳ Ritmo global: próximo card em {delay_real}s ({next_hr}) [fonte: {source}]")
         
         self.reviewing = False
         self._current_card = None
@@ -585,15 +608,21 @@ class App:
             root.setWindowState(Qt.WindowState.WindowNoState)
             root.setWidth(440)
             root.setHeight(320)
-            log("🔲 Fullscreen DESATIVADO", "INFO")
+            self.logger.log("🔲 Fullscreen DESATIVADO", "INFO")
         else:
             root.setWindowState(Qt.WindowState.WindowFullScreen)
-            log("🔳 Fullscreen ATIVADO", "INFO")
+            self.logger.log("🔳 Fullscreen ATIVADO", "INFO")
 
 
 if __name__ == "__main__":
-    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --no-sandbox --disable-software-rasterizer --allow-file-access-from-files --allow-file-access"
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+        "--disable-gpu --no-sandbox --disable-software-rasterizer "
+        "--allow-file-access-from-files --allow-file-access "
+        "--enable-features=WebUIDarkMode,OverlayScrollbar"
+    )
     app = QApplication(sys.argv)
     app_instance = App()
+    
     log(f"🚀 Booster rodando | FAVS_PRIORITY: {FAV_BONUS} | UI: QML")
+    
     sys.exit(app.exec())
