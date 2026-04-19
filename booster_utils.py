@@ -200,8 +200,18 @@ def _wrap_html(content: str, starred: bool, level: int, consecutive: int,
     if hide_furigana:
         furigana_css = """
         <style>
-        @media (hover: hover) { ruby rt { opacity: 0; transition: opacity 0.2s ease; } ruby:hover rt { opacity: 1; } }
-        @media (hover: none) { ruby rt { opacity: 1 !important; } }
+        ruby rt {
+            opacity: 0 !important;
+            transition: opacity 0.15s ease;
+            pointer-events: none;
+        }
+        ruby:hover rt {
+            opacity: 1 !important;
+        }
+        /* Em telas touch, mantém sempre visível */
+        @media (hover: none) {
+            ruby rt { opacity: 1 !important; }
+        }
         </style>
         """
     
