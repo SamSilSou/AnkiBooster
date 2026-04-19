@@ -13,16 +13,32 @@ def get_script_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 def get_anki_base_path() -> str:
-    """Retorna o caminho base do Anki conforme o SO"""
+    """Retorna o caminho base do Anki conforme o SO (Linux/Flatpak robusto)"""
     system = platform.system()
     if system == "Windows":
         appdata = os.environ.get("APPDATA", os.path.expanduser("~\\AppData\\Roaming"))
         return os.path.join(appdata, "Anki2")
-    else:
-        flatpak = os.path.expanduser("~/.var/app/net.ankiweb.Anki/data/Anki2")
-        if os.path.isdir(flatpak):
-            return flatpak
-        return os.path.expanduser("~/.local/share/Anki2")
+    
+    # Linux: verifica caminhos Flatpak conhecidos (ordem de prioridade)
+    flatpak_paths = [
+        os.path.expanduser("~/.var/app/net.ankiweb.Anki/data/Anki2"),
+        os.path.expanduser("~/.var/app/io.github.anki/data/Anki2"),
+        os.path.expanduser("~/.var/app/com.anki/data/Anki2"),
+    ]
+    
+    for path in flatpak_paths:
+        if os.path.isdir(path):
+            # log(f"📍 Flatpak Anki detectado: {path}", "INFO")
+            return path
+            
+    # Fallback: caminho nativo (instalação via pip/appimage/repos)
+    native = os.path.expanduser("~/.local/share/Anki2")
+    if os.path.isdir(native):
+        return native
+        
+    # Se nenhum existir, retorna o Flatpak oficial para logging claro
+    log("⚠️ Nenhum diretório Anki2 encontrado. Verifique se o Anki já foi aberto ao menos uma vez.", "WARN")
+    return flatpak_paths[0]
 
 # Diretório do script + pasta anki_booster
 SCRIPT_DIR = get_script_dir()
