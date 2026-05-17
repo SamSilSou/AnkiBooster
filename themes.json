@@ -1,0 +1,17 @@
+{
+  "light": {
+    "bg": "#fafafa",
+    "surface": "#ffffff",
+    "text": "#2d3748",
+    "accent": "#ffb4a8",
+    "accentText": "#561e16"
+  },
+  "dark": {
+    "bg": "#251b1a",
+    "surface": "#322826",
+    "text": "#f1dfdc",
+    "accent": "#ffb4a8",
+    "accentText": "#561e16"
+  },
+  "default": "dark"
+}

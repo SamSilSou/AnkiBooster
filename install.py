@@ -83,7 +83,7 @@ def main():
     items_to_copy = [
         "booster_service.py", "booster_utils.py", "theme.qml",
         "autostart.py", "anki_booster.vbs", "requirements.txt", "anki_extension",
-        "sounds", "booster_tray.py", "rocket.gif", "icon.svg", "booster_logger.py", "booster_logs.html"
+        "sounds", "booster_tray.py", "rocket.gif", "icon.svg", "booster_logger.py", "booster_logs.html", "themes.json"
     ]
     
     copied = 0

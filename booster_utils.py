@@ -2,7 +2,7 @@
 """
 🔧 Anki Booster - Utilitários (MODO: DEPENDENTE DO SERVICE)
 Este módulo NÃO toma decisões. Apenas executa operações quando solicitado.
-✅ Arquitetura: service como cérebro único; utils como braço executor.
+Arquitetura: service como cérebro único; utils como braço executor.
 """
 import os, sys, json, sqlite3, datetime, platform, pathlib, re, base64, shutil, tempfile, time
 from typing import Optional, List, Dict, Any
@@ -69,9 +69,46 @@ def log(msg: str, level: str = "INFO") -> None:
     else:
         # Fallback: loga só no terminal (para imports isolados)
         colors = {"INFO": "\033[94m", "OK": "\033[92m", "ERR": "\033[91m", "WARN": "\033[93m"}
-        emojis = {"INFO": "📘", "OK": "✅", "ERR": "❌", "WARN": "⚠️"}
+        emojis = {"INFO": "📘", "OK": "", "ERR": "❌", "WARN": "⚠️"}
         now = datetime.datetime.now().strftime("%H:%M:%S")
         print(f"{colors[level]}{emojis[level]} [{now}] {msg}\033[0m", flush=True)
+
+# ───────────────── THEME UTILS ─────────────────
+THEMES_FILE = os.path.join(SCRIPT_DIR, "themes.json")
+
+def load_theme() -> dict:
+    """Carrega o tema ativo do themes.json"""
+    fallback = {
+        "bg": "#fafafa", "surface": "#ffffff", "text": "#2d3748",
+        "accent": "#ffb4a8", "accentText": "#561e16"
+    }
+    if not os.path.exists(THEMES_FILE):
+        return fallback
+    try:
+        with open(THEMES_FILE, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        theme_name = cfg.get("default", "light")
+        return cfg.get(theme_name, cfg.get("light", fallback))
+    except Exception as e:
+        log(f"⚠️ Erro ao carregar tema: {e}", "WARN")
+        return fallback
+
+def set_theme(theme_name: str) -> bool:
+    """Atualiza o 'default' no themes.json e retorna True/False"""
+    if not os.path.exists(THEMES_FILE): return False
+    try:
+        with open(THEMES_FILE, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        if theme_name in cfg:
+            cfg["default"] = theme_name
+            with open(THEMES_FILE, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, indent=2, ensure_ascii=False)
+            log(f"🎨 Tema salvo: {theme_name}", "OK")
+            return True
+        return False
+    except Exception as e:
+        log(f"❌ Erro ao salvar tema: {e}", "ERR")
+        return False
 
 # ───────────────── JSON UTILS ─────────────────
 def load_json_file(path: str, default: Any) -> Any:
@@ -90,11 +127,12 @@ def save_json_file(path: str, data: Any) -> None:
     with open(path, "w", encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# ───────────────── CONFIG LOADER (✅ ADICIONADO DE VOLTA) ─────────────────
+
+# ───────────────── CONFIG LOADER ( ADICIONADO DE VOLTA) ─────────────────
 def load_config() -> Dict[str, Any]:
     """
     Carrega config do arquivo ou retorna dict vazio.
-    ✅ Service aplica defaults → utils não decide valores padrão.
+    Service aplica defaults → utils não decide valores padrão.
     """
     if os.path.exists(CONFIG_FILE):
         try:
@@ -111,7 +149,7 @@ def load_config() -> Dict[str, Any]:
     return {}  # Service aplica defaults
 
 # ───────────────── FAVORITOS (SQLite local) ─────────────────
-# ✅ Apenas operações CRUD. Sem lógica de negócio.
+# Apenas operações CRUD. Sem lógica de negócio.
 _fav_conn: Optional[sqlite3.Connection] = None
 
 def _get_fav_conn() -> sqlite3.Connection:
@@ -194,10 +232,10 @@ def _wrap_html(content: str, starred: bool, level: int, consecutive: int,
                fav_thresholds: Dict[int, int], hide_furigana: bool) -> str:
     """
     Envolve o conteúdo do card com CSS e indicadores.
-    ✅ fav_thresholds vem do service → UI sempre alinhada com backend.
+    fav_thresholds vem do service → UI sempre alinhada com backend.
     """
     star_html = "⭐" if starred else ""
-    # ✅ Usa thresholds do service para exibir progresso correto
+    # Usa thresholds do service para exibir progresso correto
     required = fav_thresholds.get(level, 5)
     level_html = f" <span style='font-size:12px;color:#ffd700'>[N{level}: {consecutive}/{required}]</span>" if starred else ""
     
@@ -244,7 +282,7 @@ def _wrap_html(content: str, starred: bool, level: int, consecutive: int,
 def _parse_anki_media(text: str, media_dir: Optional[str]) -> str:
     """
     Converte tags [sound:xxx.mp3] do Anki para <audio> HTML5 embutido em Base64.
-    ✅ FIX: prefixo `data:` adicionado para funcionar no WebView
+     FIX: prefixo `data:` adicionado para funcionar no WebView
     """
     if not text or not media_dir:
         return text
@@ -265,7 +303,7 @@ def _parse_anki_media(text: str, media_dir: Optional[str]) -> str:
                 }
                 mime = mime_map.get(ext, 'audio/mpeg')
                 
-                # ✅ FIX CRÍTICO: prefixo `data:` para data URI funcionar
+                # FIX CRÍTICO: prefixo `data:` para data URI funcionar
                 return f'<audio controls src="data:{mime};base64,{b64}"></audio>'
             except Exception as e:
                 log(f"⚠️ Erro ao ler áudio {filename}: {e}", "WARN")
@@ -281,7 +319,7 @@ def load_cards_from_anki(
     favs: List[str],
     state: Dict[str, Any],
     daily: Dict[str, Any],
-    # ✅ Filtros decididos pelo service (utils não decide nada):
+    # Filtros decididos pelo service (utils não decide nada):
     revlog_days: int,
     revlog_types: List[int],
     limit_cards: int,
@@ -290,8 +328,8 @@ def load_cards_from_anki(
 ) -> List[Dict[str, Any]]:
     """
     Carrega cards brutos do Anki.
-    ✅ NÃO filtra por next_due, limites ou favoritos.
-    ✅ Retorna cards brutos para o service decidir o que fazer.
+    NÃO filtra por next_due, limites ou favoritos.
+    Retorna cards brutos para o service decidir o que fazer.
     """
     log(f"📂 Lendo Anki: {revlog_days}d, tipos={revlog_types}, limite={limit_cards}...")
     temp_dir = None
@@ -323,7 +361,7 @@ def load_cards_from_anki(
                 ).fetchall()
 
         # Query: Não-favoritos com revlog recente
-        # ✅ SQL seguro com placeholders parameterizados
+        # SQL seguro com placeholders parameterizados
         revlog_placeholders = ','.join('?' * len(revlog_types))
         exclude_clause = f"AND c.id NOT IN ({','.join(['?']*len(fav_ints))})" if fav_ints else ""
         
@@ -335,7 +373,7 @@ def load_cards_from_anki(
             WHERE r.id > ? AND r.type IN ({revlog_placeholders}) {exclude_clause}
         """
         
-        # ✅ Parâmetros na ordem correta: cutoff, revlog_types..., fav_ints...
+        # Parâmetros na ordem correta: cutoff, revlog_types..., fav_ints...
         params = (cutoff, *revlog_types, *fav_ints) if fav_ints else (cutoff, *revlog_types)
         non_fav_raw = conn.execute(query, params).fetchall()
 
@@ -371,7 +409,7 @@ def load_cards_from_anki(
             all_f = flds.split("\x1f")
             s = state.get(str(cid), {})
             
-            # ✅ Lógica de campos: service decide, utils executa
+            # Lógica de campos: service decide, utils executa
             # - front_fields/back_fields = None → usa fallback do modelo
             # - front_fields/back_fields = [] → usa [0] (primeiro campo) como fallback seguro
             # - front_fields/back_fields = [1,2] → usa esses índices exatos
@@ -396,7 +434,7 @@ def load_cards_from_anki(
                 "id": cid,
                 "front": front_html,
                 "back": back_html,
-                # ✅ Estado vem do service, não é calculado aqui
+                # Estado vem do service, não é calculado aqui
                 "streak": s.get("streak", 0),
                 "errors_recent": s.get("errors_recent", 0),
                 "fav_level": s.get("fav_level", 1),
@@ -404,7 +442,7 @@ def load_cards_from_anki(
                 "next_due": float(s.get("next_due", 0))
             })
 
-        # ✅ SEM FILTRO DE next_due, SEM FILTRO DE LIMITE DIÁRIO
+        # SEM FILTRO DE next_due, SEM FILTRO DE LIMITE DIÁRIO
         # O service decide o que é elegível. Aqui só retornamos os brutos.
         return cards[:limit_cards]  # Apenas limite global de segurança
             

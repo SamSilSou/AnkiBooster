@@ -17,16 +17,14 @@ Window {
     color: SystemPalette.window
 
     property int slideDirection: 1
-    property bool isAnimating: false
+    property bool isAnimating: falses
 
-    // ✅ Alias para o tema dinâmico
-    property var t: bridge.theme
-
-    Connections {
-        target: bridge
-        function onThemeChanged() {
-            root.t = bridge.theme
-        }
+    property var theme: {
+        "bg": "#251b1a",
+        "surface": "#322826",
+        "text": "#f1dfdc",
+        "accent": "#ffb4a8",
+        "accentText": "#561e16"
     }
 
     // Configuracao de sons
@@ -50,7 +48,7 @@ Window {
     Timer { id: timerHard; interval: 350; running: false; repeat: false; onTriggered: bridge.answerHard() }
     Timer { id: timerFail; interval: 350; running: false; repeat: false; onTriggered: bridge.answerFail() }
 
-    // Fullscreen Toggle (Esquerda)
+    // Fullscreen Toggle
     MouseArea {
         z: 100
         width: 32; height: 32
@@ -78,53 +76,19 @@ Window {
         }
         Text {
             id: fsIcon; anchors.centerIn: parent
-            text: "⛶"; font.pixelSize: 20; color: t.text; opacity: 0.7; scale: 1.0
+            text: "⛶"; font.pixelSize: 20; color: "white"; opacity: 0.5; scale: 1.0
             Behavior on opacity { PropertyAnimation { duration: 150 } }
             Behavior on scale { NumberAnimation { duration: 80 } }
         }
-        onEntered: fsIcon.opacity = 1.0
-        onExited: fsIcon.opacity = 0.7
+        onEntered: fsIcon.opacity = 0.9
+        onExited: fsIcon.opacity = 0.5
         onPressed: fsIcon.scale = 0.85
         onReleased: fsIcon.scale = 1.0
     }
 
-    // 🌗 Botão de Troca de Tema (Direita)
-    MouseArea {
-        z: 100
-        width: 32; height: 32
-        anchors.top: parent.top; anchors.right: parent.right; anchors.margins: 8
-        hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
-        onClicked: {
-            const current = t.surface === "#ffffff" ? "light" : "dark"
-            const next = current === "light" ? "dark" : "light"
-            bridge.setTheme(next)
-        }
-        Rectangle {
-            id: themeBg
-            anchors.fill: parent
-            radius: 16
-            color: t.surface
-            opacity: 0.8
-            Behavior on color { ColorAnimation { duration: 150 } }
-        }
-        Text {
-            id: themeIcon
-            anchors.centerIn: parent
-            text: t.surface === "#ffffff" ? "🌙" : "☀️"
-            font.pixelSize: 16
-            color: t.text
-            Behavior on scale { NumberAnimation { duration: 80 } }
-        }
-        onEntered: themeBg.opacity = 1.0
-        onExited: themeBg.opacity = 0.8
-        onPressed: themeIcon.scale = 0.85
-        onReleased: themeIcon.scale = 1.0
-    }
-
     Rectangle {
         anchors.fill: parent
-        color: t.bg
+        color: theme.bg
         radius: 16
         clip: true
         focus: true
@@ -141,7 +105,7 @@ Window {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 radius: 16
-                color: t.surface
+                color: theme.surface
                 x: 0; opacity: 1; scale: 1.0
                 clip: true
                 implicitWidth: 416
@@ -157,7 +121,7 @@ Window {
                     onFullScreenRequested: function(request) { request.reject() }
                 }
 
-                // OVERLAY DE SNOOZE (cores 100% preservadas ✅)
+                // OVERLAY DE SNOOZE
                 Rectangle {
                     id: snoozeOverlay
                     anchors.fill: parent
@@ -174,13 +138,14 @@ Window {
                         spacing: 16
                         width: parent.width * 0.9
 
+                        // Header
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 10
                             Text { text: "🌙"; font.pixelSize: 24 }
                             Text {
                                 text: "Quanto tempo de soneca?"
-                                color: t.text
+                                color: theme.text
                                 font.pixelSize: 16
                                 font.bold: true
                                 Layout.fillWidth: true
@@ -195,7 +160,7 @@ Window {
                                 Text {
                                     text: "✖"
                                     anchors.centerIn: parent
-                                    color: t.text
+                                    color: theme.text
                                     font.pixelSize: 18
                                     opacity: 0.7
                                     Behavior on opacity { NumberAnimation { duration: 100 } }
@@ -205,6 +170,7 @@ Window {
                             }
                         }
 
+                        // Controles de tempo
                         RowLayout {
                             id: timeControls
                             Layout.fillWidth: true
@@ -215,40 +181,42 @@ Window {
                                 Layout.preferredWidth: 48; height: 36; radius: 8; color: "#4a5568"
                                 Behavior on color { ColorAnimation { duration: 100 } }
                                 MouseArea {
-                                    anchors.fill: parent; hoverEnabled: true
+                                    anchors.fill: parent
+                                    hoverEnabled: true
                                     onEntered: parent.color = "#5a6578"
                                     onExited: parent.color = "#4a5568"
                                     onClicked: {
                                         timeControls.minutes = Math.max(1, timeControls.minutes - 5)
                                         if (soundsEnabled) sndClick.play()
                                     }
-                                    Text { text: "-5m"; anchors.centerIn: parent; color: t.text; font.pixelSize: 14; font.bold: true }
+                                    Text { text: "-5m"; anchors.centerIn: parent; color: theme.text; font.pixelSize: 14; font.bold: true }
                                 }
                             }
                             Rectangle {
                                 Layout.preferredWidth: 48; height: 36; radius: 8; color: "#4a5568"
                                 Behavior on color { ColorAnimation { duration: 100 } }
                                 MouseArea {
-                                    anchors.fill: parent; hoverEnabled: true
+                                    anchors.fill: parent
+                                    hoverEnabled: true
                                     onEntered: parent.color = "#5a6578"
                                     onExited: parent.color = "#4a5568"
                                     onClicked: {
                                         timeControls.minutes = Math.max(1, timeControls.minutes - 1)
                                         if (soundsEnabled) sndClick.play()
                                     }
-                                    Text { text: "-1m"; anchors.centerIn: parent; color: t.text; font.pixelSize: 14; font.bold: true }
+                                    Text { text: "-1m"; anchors.centerIn: parent; color: theme.text; font.pixelSize: 14; font.bold: true }
                                 }
                             }
 
                             Rectangle {
                                 Layout.fillWidth: true; height: 36; radius: 8
-                                color: "#251b1a"  // ⚠️ mantido (faz parte do Snooze)
-                                border.color: t.accent
+                                color: "#251b1a"
+                                border.color: theme.accent
                                 border.width: 2
                                 Text {
                                     text: timeControls.minutes + " minutos"
                                     anchors.centerIn: parent
-                                    color: t.text
+                                    color: theme.text
                                     font.pixelSize: 15
                                     font.bold: true
                                 }
@@ -258,32 +226,35 @@ Window {
                                 Layout.preferredWidth: 48; height: 36; radius: 8; color: "#4a5568"
                                 Behavior on color { ColorAnimation { duration: 100 } }
                                 MouseArea {
-                                    anchors.fill: parent; hoverEnabled: true
+                                    anchors.fill: parent
+                                    hoverEnabled: true
                                     onEntered: parent.color = "#5a6578"
                                     onExited: parent.color = "#4a5568"
                                     onClicked: {
                                         timeControls.minutes = Math.min(120, timeControls.minutes + 1)
                                         if (soundsEnabled) sndClick.play()
                                     }
-                                    Text { text: "+1m"; anchors.centerIn: parent; color: t.text; font.pixelSize: 14; font.bold: true }
+                                    Text { text: "+1m"; anchors.centerIn: parent; color: theme.text; font.pixelSize: 14; font.bold: true }
                                 }
                             }
                             Rectangle {
                                 Layout.preferredWidth: 48; height: 36; radius: 8; color: "#4a5568"
                                 Behavior on color { ColorAnimation { duration: 100 } }
                                 MouseArea {
-                                    anchors.fill: parent; hoverEnabled: true
+                                    anchors.fill: parent
+                                    hoverEnabled: true
                                     onEntered: parent.color = "#5a6578"
                                     onExited: parent.color = "#4a5568"
                                     onClicked: {
                                         timeControls.minutes = Math.min(120, timeControls.minutes + 5)
                                         if (soundsEnabled) sndClick.play()
                                     }
-                                    Text { text: "+5m"; anchors.centerIn: parent; color: t.text; font.pixelSize: 14; font.bold: true }
+                                    Text { text: "+5m"; anchors.centerIn: parent; color: theme.text; font.pixelSize: 14; font.bold: true }
                                 }
                             }
                         }
 
+                        // Botoes de acao
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 12
@@ -292,7 +263,8 @@ Window {
                                 Layout.fillWidth: true; height: 40; radius: 10; color: "#4a5568"
                                 Behavior on color { ColorAnimation { duration: 100 } }
                                 MouseArea {
-                                    anchors.fill: parent; hoverEnabled: true
+                                    anchors.fill: parent
+                                    hoverEnabled: true
                                     onEntered: parent.color = "#5a6578"
                                     onExited: parent.color = "#4a5568"
                                     onClicked: {
@@ -302,7 +274,7 @@ Window {
                                     Text {
                                         text: "Cancelar"
                                         anchors.centerIn: parent
-                                        color: t.text
+                                        color: theme.text
                                         font.bold: true
                                         font.pixelSize: 14
                                     }
@@ -310,12 +282,13 @@ Window {
                             }
 
                             Rectangle {
-                                Layout.fillWidth: true; height: 40; radius: 10; color: t.accent
+                                Layout.fillWidth: true; height: 40; radius: 10; color: theme.accent
                                 Behavior on color { ColorAnimation { duration: 100 } }
                                 MouseArea {
-                                    anchors.fill: parent; hoverEnabled: true
+                                    anchors.fill: parent
+                                    hoverEnabled: true
                                     onEntered: parent.color = "#ff9a8e"
-                                    onExited: parent.color = t.accent
+                                    onExited: parent.color = theme.accent
                                     onClicked: {
                                         var mins = timeControls.minutes
                                         bridge.snoozeWithMinutes(mins)
@@ -325,7 +298,7 @@ Window {
                                     Text {
                                         text: "Confirmar"
                                         anchors.centerIn: parent
-                                        color: t.accentText
+                                        color: theme.accentText
                                         font.bold: true
                                         font.pixelSize: 14
                                     }
@@ -342,7 +315,7 @@ Window {
                 Layout.fillWidth: true
                 height: 46
                 radius: 12
-                color: t.surface
+                color: theme.surface
                 scale: 1.0
                 clip: true
                 Behavior on scale { NumberAnimation { duration: 80; easing.type: Easing.OutQuad } }
@@ -353,7 +326,7 @@ Window {
                     Rectangle {
                         anchors.centerIn: parent
                         width: rippleShow.width; height: rippleShow.height
-                        radius: width/2; color: t.accent; opacity: 0.5
+                        radius: width/2; color: theme.accent; opacity: 0.5
                     }
                     ParallelAnimation {
                         id: rippleShowAnim
@@ -378,7 +351,7 @@ Window {
                 Text {
                     text: "Mostrar resposta 👀"
                     anchors.centerIn: parent
-                    color: t.text
+                    color: theme.text
                     font.pixelSize: 15
                     font.bold: true
                 }
@@ -403,7 +376,7 @@ Window {
                     Layout.preferredWidth: 48
                     height: 48
                     radius: 12
-                    color: "#4a5568"  // ✅ preservado
+                    color: "#4a5568"
                     scale: 1.0
                     clip: true
                     Behavior on scale { NumberAnimation { duration: 80; easing.type: Easing.OutQuad } }
@@ -441,7 +414,7 @@ Window {
                             if (soundsEnabled) sndClick.play()
                         }
                     }
-                    Text { text: "🌙"; anchors.centerIn: parent; font.pixelSize: 20; color: t.text; opacity: 0.9 }
+                    Text { text: "🌙"; anchors.centerIn: parent; font.pixelSize: 20; color: theme.text; opacity: 0.9 }
                 }
 
                 Repeater {
@@ -456,7 +429,7 @@ Window {
                         Layout.fillWidth: true
                         height: 48
                         radius: 12
-                        color: modelData.color  // ✅ preservado
+                        color: modelData.color
                         scale: 1.0
                         clip: true
                         Behavior on color { ColorAnimation { duration: 100 } }
@@ -578,7 +551,6 @@ Window {
         NumberAnimation { target: cardContainer; property: "scale"; to: 1.0; duration: 80; easing.type: Easing.OutQuad }
     }
 
-    
     // Conexoes com Python
     Connections {
         target: bridge
@@ -589,21 +561,14 @@ Window {
             exitAnim.finished.connect(function onExitFinished() {
                 exitAnim.finished.disconnect(onExitFinished)
                 webView.loadHtml(`
-                    <html><body style="background:transparent;color:${root.t.text};
+                    <html><body style="background:transparent;color:${root.theme.text};
                     font-family:'Segoe UI',system-ui,sans-serif;font-size:16px;
                     text-align:center;margin:0;padding:0;word-wrap:break-word;">${html}</body></html>`)
                 cardContainer.x = -60 * root.slideDirection
                 cardContainer.opacity = 0
                 cardContainer.scale = 0.94
                 cardContainer.rotation = 0
-
-                // ✅ FIX: Força geometria e estado antes de mostrar (evita bug de fullscreen no Linux)
-                root.width = 440
-                root.height = 320
-                root.show()
-                root.raise()
-                root.requestActivate()
-
+                root.show(); root.raise(); root.requestActivate()
                 enterAnim.start()
                 enterAnim.finished.connect(function onEnterFinished() {
                     root.isAnimating = false
@@ -620,7 +585,7 @@ Window {
         anchors.fill: cardContainer
         radius: cardContainer.radius
         color: "transparent"
-        border.color: t.accent
+        border.color: theme.accent
         border.width: 2
         opacity: 0
         visible: opacity > 0
