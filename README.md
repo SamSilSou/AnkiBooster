@@ -214,7 +214,7 @@ Faça backup para preservar:
 ### Logs no Linux
 
 ```bash
-journalctl --user -u anki-booster
+journalctl --user -u anki-booster -f
 ```
 
 ---
