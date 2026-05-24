@@ -19,13 +19,13 @@ DEFAULT_CONFIG = {
     "BUFFER_SIZE": 5,
     "MAX_DAILY": 3,
     "REVLOG_DAYS": 3,
-    "LIMIT_CARDS": 200,
+    "LIMIT_CARDS": 50,
     "FAVS_PRIORITY": 3,
     "REVLOG_TYPES": [0, 1, 2, 3],
     "FRONT_FIELDS": None,
     "BACK_FIELDS": None,
     "MIN_CARD_DELAY": 20,
-    "HIDE_FURIGANA_ON_HOVER": False  # Oculta furigana até passar o mouse sobre a palavra no popup
+    "HIDE_FURIGANA_ON_HOVER": True  # Oculta furigana até passar o mouse sobre a palavra no popup
 }
 
 def log(msg, status="ℹ️"):

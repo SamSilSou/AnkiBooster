@@ -18,8 +18,9 @@ Window {
 
     property int slideDirection: 1
     property bool isAnimating: false
+    property string pendingHtml: ""
 
-    // ✅ Alias para o tema dinâmico
+    // Alias para o tema dinâmico
     property var t: bridge.theme
 
     Connections {
@@ -88,7 +89,7 @@ Window {
         onReleased: fsIcon.scale = 1.0
     }
 
-    // 🌗 Botão de Troca de Tema (Direita)
+    // Botao de Troca de Tema (Direita)
     MouseArea {
         z: 100
         width: 32; height: 32
@@ -157,7 +158,7 @@ Window {
                     onFullScreenRequested: function(request) { request.reject() }
                 }
 
-                // OVERLAY DE SNOOZE (cores 100% preservadas ✅)
+                // OVERLAY DE SNOOZE
                 Rectangle {
                     id: snoozeOverlay
                     anchors.fill: parent
@@ -242,7 +243,7 @@ Window {
 
                             Rectangle {
                                 Layout.fillWidth: true; height: 36; radius: 8
-                                color: "#251b1a"  // ⚠️ mantido (faz parte do Snooze)
+                                color: "#251b1a"
                                 border.color: t.accent
                                 border.width: 2
                                 Text {
@@ -403,7 +404,7 @@ Window {
                     Layout.preferredWidth: 48
                     height: 48
                     radius: 12
-                    color: "#4a5568"  // ✅ preservado
+                    color: "#4a5568"
                     scale: 1.0
                     clip: true
                     Behavior on scale { NumberAnimation { duration: 80; easing.type: Easing.OutQuad } }
@@ -456,7 +457,7 @@ Window {
                         Layout.fillWidth: true
                         height: 48
                         radius: 12
-                        color: modelData.color  // ✅ preservado
+                        color: modelData.color
                         scale: 1.0
                         clip: true
                         Behavior on color { ColorAnimation { duration: 100 } }
@@ -545,9 +546,43 @@ Window {
         NumberAnimation { target: cardContainer; property: "rotation"; to: 0; duration: 60; easing.type: Easing.OutBack }
     }
 
-    // Exit animation
+    // Exit animation (agora com onFinished para o swap JS)
     ParallelAnimation {
         id: exitAnim
+        onFinished: {
+            // Troca o HTML via JavaScript enquanto o container está invisível
+            var safe = root.pendingHtml
+                .replace(/\\/g, "\\\\")
+                .replace(/'/g, "\\'")
+                .replace(/\n/g, "\\n")
+                .replace(/\r/g, "")
+                .replace(/`/g, "\\`");
+
+            var textColor = root.t?.text || "#2d3748";
+            webView.runJavaScript(`
+                (function() {
+                    var el = document.body;
+                    if (el) {
+                        el.style.transition = 'opacity 0.12s ease-in-out';
+                        el.style.opacity = '0';
+                        setTimeout(function() {
+                            el.innerHTML = '${safe}';
+                            el.style.opacity = '1';
+                        }, 120);
+                    }
+                })();
+            `)
+
+            // Reseta posição para a entrada
+            cardContainer.x = -60 * root.slideDirection
+            cardContainer.opacity = 0
+            cardContainer.scale = 0.94
+            cardContainer.rotation = 0
+            
+            // Libera interações após a transição
+            swapTimer.restart()
+            enterAnim.start()
+        }
         NumberAnimation { target: cardContainer; property: "x"; to: 60 * root.slideDirection; duration: 180; easing.type: Easing.InQuad }
         NumberAnimation { target: cardContainer; property: "opacity"; to: 0; duration: 140 }
         NumberAnimation { target: cardContainer; property: "scale"; to: 0.96; duration: 160 }
@@ -564,7 +599,6 @@ Window {
     // Reveal animation
     SequentialAnimation {
         id: revealAnim
-        NumberAnimation { target: cardContainer; property: "scale"; to: 0.96; duration: 60; easing.type: Easing.InQuad }
         ScriptAction {
             script: {
                 bridge.onShowAnswerClicked()
@@ -574,44 +608,46 @@ Window {
                 fadeShowOut.start()
             }
         }
-        NumberAnimation { target: cardContainer; property: "scale"; to: 1.03; duration: 100; easing.type: Easing.OutBack }
-        NumberAnimation { target: cardContainer; property: "scale"; to: 1.0; duration: 80; easing.type: Easing.OutQuad }
+        NumberAnimation { target: showBtn; property: "scale"; to: 1.03; duration: 100; easing.type: Easing.OutBack }
+        NumberAnimation { target: showBtn; property: "scale"; to: 1.0; duration: 80; easing.type: Easing.OutQuad }
     }
 
-    
     // Conexoes com Python
     Connections {
         target: bridge
         function onShow(html) {
             if (root.isAnimating) return
             root.isAnimating = true
-            exitAnim.start()
-            exitAnim.finished.connect(function onExitFinished() {
-                exitAnim.finished.disconnect(onExitFinished)
+            root.pendingHtml = html
+
+            if (!root.visible) {
+                // Primeiro carregamento: precisa mostrar a janela e ajustar geometria
+                var textColor = root.t?.text || "#2d3748"
                 webView.loadHtml(`
-                    <html><body style="background:transparent;color:${root.t.text};
+                    <html><body style="background:transparent;color:${textColor};
                     font-family:'Segoe UI',system-ui,sans-serif;font-size:16px;
                     text-align:center;margin:0;padding:0;word-wrap:break-word;">${html}</body></html>`)
-                cardContainer.x = -60 * root.slideDirection
-                cardContainer.opacity = 0
-                cardContainer.scale = 0.94
-                cardContainer.rotation = 0
-
-                // ✅ FIX: Força geometria e estado antes de mostrar (evita bug de fullscreen no Linux)
+                
                 root.width = 440
                 root.height = 320
                 root.show()
                 root.raise()
                 root.requestActivate()
-
-                enterAnim.start()
-                enterAnim.finished.connect(function onEnterFinished() {
-                    root.isAnimating = false
-                    enterAnim.finished.disconnect(onEnterFinished)
-                })
-            })
+                root.isAnimating = false
+            } else {
+                // Trocas subsequentes: só anima o container e usa JS no WebView
+                exitAnim.start()
+            }
         }
         function onHide() { root.hide() }
+    }
+
+    // Timer para liberar interações após o swap
+    Timer {
+        id: swapTimer
+        interval: 300
+        repeat: false
+        onTriggered: root.isAnimating = false
     }
 
     // Focus glow

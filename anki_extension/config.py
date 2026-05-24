@@ -17,10 +17,10 @@ DEFAULTS = {
     "BUFFER_SIZE": 5,
     "MAX_DAILY": 3,
     "REVLOG_DAYS": 3,
-    "LIMIT_CARDS": 200,
+    "LIMIT_CARDS": 15,
     "FAVS_PRIORITY": 3,
     "REVLOG_TYPES": [0,1,2,3],
-    "HIDE_FURIGANA_ON_HOVER": False
+    "HIDE_FURIGANA_ON_HOVER": True
 }
 
 # ───────────────── TCP HELPERS ─────────────────
@@ -146,7 +146,7 @@ def open_config():
         ("BUFFER_SIZE", "Buffer", "📦", 1, 20, 1, "Cards simultâneos"),
         ("MAX_DAILY", "Máx por dia", "🔁", 1, 10, 1, "Repetições por dia"),
         ("REVLOG_DAYS", "Dias do histórico", "📅", 1, 30, 1, "Busca no revlog"),
-        ("LIMIT_CARDS", "Limite de cards", "🎴", 50, 500, 50, "Máximo carregado"),
+        ("LIMIT_CARDS", "Limite de cards", "🎴", 10, 50, 15, "Máximo carregado"),
     ]
 
     for key, title, emoji, min_v, max_v, step, desc in sliders_list:
