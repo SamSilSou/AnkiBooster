@@ -1,75 +1,87 @@
 # 🧠 Como o Booster Funciona
 
-> **Anki Booster é um Companion SRS Engine independente e complementar ao Anki.**
->
-> Ele não substitui o scheduler oficial.
->
-> Ele executa um **segundo sistema de repetição espaçada em paralelo**, focado exclusivamente em identificar e reforçar cartões que ainda apresentam fragilidade real.
+## Um Companion SRS, não um Addon
 
-Enquanto o Anki responde:
+O Anki Booster não foi projetado como uma extensão tradicional.
 
-> 📅 **"Quando devo rever este cartão novamente?"**
+Ele é um **Companion SRS Engine** que opera em paralelo ao scheduler oficial do Anki.
+
+Enquanto o Anki é responsável por determinar quando um cartão deve voltar a ser revisado para maximizar retenção de longo prazo, o Booster possui um objetivo diferente:
+
+> Identificar quais conhecimentos ainda apresentam fragilidade real e reforçá-los continuamente ao longo do dia.
+
+Esses dois objetivos são complementares.
+
+O Anki responde:
+
+> 📅 "Quando devo rever este cartão novamente?"
 
 O Booster responde:
 
-> 🎯 **"Quais cartões ainda estão frágeis neste momento?"**
+> 🎯 "Quais cartões ainda não estão realmente dominados?"
 
-Para isso, ele mantém:
-
-✅ Scheduler próprio  
-✅ Métricas próprias  
-✅ Estado persistente próprio  
-✅ Sistema de domínio próprio  
-✅ Priorização própria
-
-Tudo sem alterar o funcionamento interno do Anki.
+Por isso o Booster mantém seu próprio modelo de estado, suas próprias métricas e seu próprio scheduler, sem alterar o funcionamento do Anki.
 
 ---
 
-# ⚙️ Arquitetura
+# ⚙️ Arquitetura Geral
 
 ```text
-┌───────────────────────┐
-│         Anki          │
-│   Official Scheduler  │
-└───────────┬───────────┘
-            │
-            ▼
-┌───────────────────────┐
-│      Anki Booster     │
-│  Companion SRS Engine │
-└───────────────────────┘
+┌─────────────────────┐
+│        Anki         │
+│ Official Scheduler  │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│    Anki Booster     │
+│ Companion SRS Engine│
+└─────────────────────┘
 ```
 
-### Responsabilidades
+O scheduler do Anki continua sendo a fonte de verdade para memória de longo prazo.
 
-| Sistema | Responsabilidade |
-|----------|----------|
-| 🧠 Anki | Memória de longo prazo |
-| 🚀 Booster | Reforço contínuo |
-| 📈 Booster | Recuperação de cartões frágeis |
-| 🎯 Booster | Priorização por dificuldade recente |
-| 🔄 Booster | Micro-revisões ao longo do dia |
+O Booster adiciona uma segunda camada especializada em:
+
+- 🔥 Recuperação de cartões frágeis
+- 🎯 Priorização por dificuldade recente
+- 📈 Reforço contínuo
+- 🧠 Consolidação fora do contexto de revisão
+- ⭐ Domínio ativo de cartões prioritários
+
+O resultado é um sistema híbrido onde ambos trabalham simultaneamente, cada um resolvendo um problema diferente.
 
 ---
 
 # 🧠 Priorização por Dificuldade Real
 
-A maioria das ferramentas semelhantes considera apenas:
+Um dos maiores problemas de utilizar apenas lapses históricos é que eles não distinguem dificuldades antigas de dificuldades atuais.
+
+Imagine dois cartões.
+
+### Card A
 
 ```text
-Lapses históricos
+15 lapses históricos
+0 erros recentes
+Ease 250
 ```
 
-O Booster considera:
+### Card B
 
-- 🔥 Erros recentes do Anki
-- 🔥 Erros recentes do Booster
-- 📚 Histórico geral de lapses
+```text
+2 lapses históricos
+3 erros hoje
+Ease 250
+```
 
----
+Em muitos sistemas, o Card A continuará sendo tratado como mais problemático simplesmente porque acumulou mais erros ao longo da vida.
 
-## Fórmula de Prioridade
+O Booster segue uma filosofia diferente.
+
+Dificuldades recentes possuem mais valor diagnóstico do que dificuldades antigas.
+
+Por isso sua pontuação principal é calculada utilizando múltiplas fontes de informação:
 
 ```python
 score = (
@@ -79,98 +91,45 @@ score = (
 )
 ```
 
-### Pesos
+Onde:
 
-| Métrica | Peso |
-|----------|----------:|
-| 🔥 Erro recente no Anki | 100 |
-| ⚠️ Erro recente no Booster | 50 |
-| 📚 Lapse histórico | 5 |
+- 🔥 `anki_revlog_lapses` representa erros recentes detectados pelo próprio Anki
+- ⚠️ `booster_errors` representa erros observados durante as revisões extras do Booster
+- 📚 `anki_lapses` representa o histórico acumulado do cartão
 
----
+O peso muito maior dos erros recentes faz com que cartões atualmente problemáticos recebam prioridade máxima.
 
-# 🔬 Exemplo Real de Decisão
+### Exemplo
 
-## Card A
-
-```text
-Lapses históricos: 15
-Erros recentes: 0
-Ease: 250
-```
-
-## Card B
-
-```text
-Lapses históricos: 2
-Erros recentes hoje: 3
-Ease: 250
-```
-
-### Pontuação
-
-**Card A**
+Card A:
 
 ```text
 15 × 5 = 75
 ```
 
-**Card B**
+Card B:
 
 ```text
 3 × 100 = 300
 ```
 
----
+Resultado:
 
-## Resultado
+🏆 O Card B será exibido primeiro.
 
-🏆 **Card B é exibido primeiro**
+Mesmo possuindo menos lapses históricos.
 
-Mesmo tendo menos lapses históricos.
-
-Porque o Booster considera que:
-
-> 🎯 **Dificuldade recente é mais importante que dificuldade antiga.**
+Isso acontece porque o Booster considera que a dificuldade observada hoje é mais relevante do que a dificuldade observada meses atrás.
 
 ---
 
-# ⏳ Scheduler Independente
+# 📊 Seleção Inteligente de Cartões
 
-Cada cartão possui seu próprio agendamento.
+Após identificar os cartões disponíveis, o Booster não escolhe um cartão aleatório.
 
-```python
-card["next_due"] = now + card_delay
-```
+Ele executa uma ordenação baseada em múltiplos critérios.
 
-Além disso existe um ritmo global de exibição:
-
-```python
-self.next_global_show = min(
-    now + GLOBAL_CORRECT,
-    now + card_delay
-)
-```
-
----
-
-## Resultado
-
-```text
-Scheduler do Anki
-          +
-Scheduler do Booster
-```
-
-Funcionando simultaneamente.
-
-Sem interferir um no outro.
-
----
-
-# 📊 Seleção Inteligente
-
-Quando vários cartões estão disponíveis, o Booster escolhe automaticamente o mais relevante.
+Trecho real da implementação:
 
 ```python
 card = min(
@@ -179,29 +138,87 @@ card = min(
 )
 ```
 
-A decisão considera:
+A prioridade final considera:
 
-- 📚 Lapses
-- 📉 Ease Factor
-- 📆 Intervalo atual
-- 🔥 Erros recentes
-- 📈 Streak
-- ⭐ Favoritos
-- 📝 Revlog recente
+```python
+return (
+    -score,
+    anki_ease,
+    anki_interval,
+    booster_streak,
+    -fav_bonus
+)
+```
+
+Isso significa que a decisão de exibição não depende apenas de erros.
+
+Ela considera simultaneamente:
+
+- dificuldade recente
+- Ease Factor
+- intervalo atual
+- desempenho acumulado
+- sequência de acertos
+- prioridade de favoritos
+
+Dois cartões com a mesma quantidade de erros podem receber prioridades completamente diferentes dependendo do contexto.
+
+---
+
+# ⏳ Scheduler Independente
+
+O Booster possui um scheduler próprio.
+
+Cada cartão recebe um agendamento individual:
+
+```python
+card["next_due"] = now + card_delay
+```
+
+Esse agendamento é completamente separado dos intervalos oficiais do Anki.
+
+Além disso existe um controle global responsável por manter um ritmo constante de exposição:
+
+```python
+self.next_global_show = min(
+    now + GLOBAL_CORRECT,
+    now + card_delay
+)
+```
+
+Na prática existem dois schedulers funcionando simultaneamente:
+
+```text
+Scheduler do Anki
+          +
+Scheduler do Booster
+```
+
+O primeiro controla memória de longo prazo.
+
+O segundo controla reforço contínuo.
+
+Nenhum interfere no outro.
 
 ---
 
 # 🔄 Buffer Rotativo Contínuo
 
-Os cartões não são exibidos diretamente da fila principal.
+Mostrar cartões diretamente da coleção carregada gera um problema clássico:
 
-O Booster utiliza uma arquitetura de buffer ativo.
+alguns cartões podem monopolizar a fila.
+
+Para evitar isso o Booster utiliza um buffer ativo.
+
+Quando a sessão é iniciada:
 
 ```python
 self.active_cards = self.pool_cards[:BUFFER_SIZE]
 ```
 
-Após cada revisão:
+Apenas os cartões presentes nesse buffer participam da seleção.
+
+Após cada revisão, o cartão é reposicionado:
 
 ```python
 self.active_cards.append(
@@ -209,9 +226,7 @@ self.active_cards.append(
 )
 ```
 
----
-
-## Fluxo
+Essa arquitetura cria um fluxo contínuo:
 
 ```text
 Pool Global
@@ -223,86 +238,105 @@ Buffer Ativo
 Card Exibido
 ```
 
-### Benefícios
+Benefícios:
 
-✅ Menos repetição imediata
-
-✅ Fluxo contínuo
-
-✅ Melhor distribuição de exposição
-
-✅ Menos efeito de memorização por posição
+- menor repetição imediata
+- distribuição mais homogênea
+- menor previsibilidade
+- sensação de revisão mais natural
 
 ---
 
 # 📈 Estado Persistente Próprio
 
-O Booster mantém métricas independentes para cada cartão.
+O Anki já possui métricas próprias.
+
+Porém elas foram projetadas para resolver problemas específicos do scheduler oficial.
+
+O Booster precisa responder perguntas diferentes.
+
+Por isso ele mantém um estado independente:
 
 ```json
 {
-  "streak": 0,
-  "errors_recent": 0,
-  "next_due": 0,
-  "fav_level": 1
+    "streak": 0,
+    "errors_recent": 0,
+    "next_due": 0,
+    "fav_level": 1,
+    "fav_consecutive": 0
 }
 ```
 
-Esses dados permanecem salvos mesmo após reiniciar o programa.
+Cada campo possui uma função específica.
 
----
+### streak
 
-## O Booster Aprende
+Quantidade de exposições consecutivas respondidas corretamente dentro do Booster.
 
-Com o tempo ele constrói uma segunda camada de conhecimento sobre o usuário:
+### errors_recent
 
-- 📊 Cartões frágeis
-- 📈 Cartões dominados
-- 🔥 Erros recorrentes
-- ⭐ Cartões prioritários
+Dificuldades observadas durante as revisões extras.
+
+### next_due
+
+Próximo momento em que o cartão poderá ser exibido novamente pelo scheduler do Booster.
+
+### fav_level
+
+Nível atual dentro do sistema de domínio.
+
+### fav_consecutive
+
+Quantidade de acertos consecutivos dentro do nível atual.
+
+Esses dados permanecem salvos entre reinicializações.
+
+Com o tempo o Booster constrói uma visão própria sobre a evolução do usuário.
 
 ---
 
 # ⭐ Sistema de Progressão de Domínio
 
-Favoritos não são apenas marcadores.
+Favoritos não funcionam apenas como marcadores.
 
-Eles entram em um sistema próprio de progressão.
+Eles entram em um fluxo completo de domínio.
+
+Trecho real:
 
 ```python
 if card["fav_consecutive"] >= required:
     card["fav_level"] += 1
 ```
 
----
-
-## Progressão
+Fluxo:
 
 ```text
 ⭐ N1
-   ↓
+ ↓
 ⭐⭐ N2
-   ↓
+ ↓
 ⭐⭐⭐ N3
-   ↓
+ ↓
 🏆 Graduado
 ```
 
-### Regras
+Cada nível exige uma sequência mínima de acertos.
 
-✅ Acertos consecutivos avançam níveis
+Um erro reinicia o progresso.
 
-❌ Um erro reinicia o progresso
+Quando o domínio é comprovado, o favorito é automaticamente graduado e removido da lista de treinamento especial.
 
-🏆 Domínio comprovado remove o favorito automaticamente
+O objetivo não é apenas revisar.
+
+É comprovar domínio.
 
 ---
 
-# 📡 Dupla Camada de Detecção de Erros
+# 📡 Dupla Camada de Detecção de Dificuldade
 
-O Booster monitora duas fontes independentes.
+O Booster monitora duas fontes independentes de informação.
 
-## Fonte 1 — Anki
+### Dados do Anki
 
 ```python
 anki_revlog_lapses
@@ -310,9 +344,9 @@ anki_revlog_lapses
 
 Obtidos diretamente do Revlog.
 
----
+Representam erros observados pelo scheduler oficial.
 
-## Fonte 2 — Booster
+### Dados do Booster
 
 ```python
 errors_recent
@@ -320,86 +354,94 @@ errors_recent
 
 Obtidos durante as revisões extras.
 
----
+Representam dificuldades observadas fora do contexto normal do Anki.
 
-## O que isso permite detectar?
+Isso permite detectar situações extremamente interessantes.
 
-Situações como:
+Por exemplo:
 
 ```text
-O usuário já não erra mais no Anki...
+O usuário não erra mais durante as revisões normais.
 
-Mas continua errando
-quando encontra o cartão
+Mas continua errando quando encontra o cartão
 fora da sessão principal.
 ```
 
-🎯 Exatamente o tipo de fragilidade que normalmente passa despercebida.
+Esse tipo de fragilidade normalmente passa despercebido.
+
+O Booster consegue identificá-la.
+
+---
+
+# 🧠 Reforço Fora do Contexto
+
+Uma revisão tradicional acontece dentro de um contexto específico.
+
+O usuário senta para estudar.
+
+Abre o Anki.
+
+Entra em modo de revisão.
+
+O Booster quebra esse contexto.
+
+Os cartões podem aparecer enquanto o usuário:
+
+- programa
+- trabalha
+- navega na internet
+- estuda outro assunto
+- realiza atividades normais do dia
+
+Isso transforma cada resposta correta em uma evidência muito mais forte de domínio real.
+
+O conhecimento deixa de depender do contexto da sessão.
 
 ---
 
 # 🔒 Segurança
 
-O Booster foi projetado para ser extremamente conservador.
+O Booster foi projetado para operar de forma totalmente não destrutiva.
 
-## Garantias
+Garantias da arquitetura:
 
-✅ Leitura segura do banco
+✅ Leitura segura do banco do Anki
 
-✅ Cópia temporária da collection
+✅ Cópia temporária para processamento
 
 ✅ Nenhuma alteração em `collection.anki2`
 
-✅ Nenhuma alteração no scheduler oficial
+✅ Nenhuma modificação do scheduler oficial
 
-✅ Nenhuma modificação de intervalos
+✅ Nenhuma alteração de intervalos
 
-✅ Nenhuma modificação de decks
+✅ Nenhuma alteração de notas
 
-✅ Nenhuma modificação de notas
+✅ Nenhuma alteração de decks
+
+O Anki continua sendo o único responsável pelo estado oficial do aprendizado.
 
 ---
 
-# 🚀 Em Resumo
+# 🚀 Resumo
 
-O **Anki Booster** não é um addon tradicional.
+O Booster não é um visualizador de cartões.
 
-Ele é um:
+Não é um popup.
 
-> 🧠 **Companion SRS Engine**
+Não é um addon de interface.
 
-que executa um segundo sistema de repetição espaçada em paralelo ao Anki.
+Ele é um segundo sistema de repetição espaçada operando em paralelo ao Anki.
 
 Com:
 
-✅ Scheduler próprio
+- 🧠 Scheduler próprio
+- 📈 Estado persistente próprio
+- 🎯 Engine de priorização própria
+- ⭐ Sistema de domínio próprio
+- 🔥 Métricas próprias de dificuldade
+- 📡 Monitoramento independente de erros
 
-✅ Métricas próprias
+Tudo isso sem modificar o funcionamento interno do Anki.
 
-✅ Estado persistente próprio
-
-✅ Sistema de domínio próprio
-
-✅ Priorização baseada em dificuldade recente
-
-✅ Reforço contínuo ao longo do dia
-
-O resultado é um sistema capaz de transformar pequenos momentos livres em oportunidades constantes de consolidação da memória, atuando exatamente onde o aprendizado ainda apresenta fragilidade.
-
----
-
-## 💡 Filosofia
-
-```text
-Anki:
-"Quando devo rever novamente?"
-
-Booster:
-"O que ainda não está realmente dominado?"
-```
-
-Os dois sistemas trabalham juntos.
-
-🧠 Anki constrói a memória.
-
-🚀 Booster fortalece a memória.
+O resultado é um sistema capaz de transformar pequenos momentos do dia em oportunidades contínuas de reforço, consolidação e domínio real da memória.
