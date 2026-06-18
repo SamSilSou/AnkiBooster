@@ -100,7 +100,7 @@ os cards mais difíceis reaparecem suavemente em uma pequena interface flutuante
 | Hyprland | ✅ |
 | KDE Plasma | ✅ |
 | GNOME | ✅ |
-| Windows | ⚠️ Experimental |
+| Windows | ✅ |
 | macOS | ⚠️ Parcial |
 
 ---
