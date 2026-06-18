@@ -1,278 +1,405 @@
-# 🚀 Anki Booster
+# 🧠 Como o Booster Funciona
 
-> *"Se o Anki funciona tão bem, por que estudar só quando ele está aberto?"*
+> **Anki Booster é um Companion SRS Engine independente e complementar ao Anki.**
+>
+> Ele não substitui o scheduler oficial.
+>
+> Ele executa um **segundo sistema de repetição espaçada em paralelo**, focado exclusivamente em identificar e reforçar cartões que ainda apresentam fragilidade real.
 
-Um **Companion SRS de Reforço Contínuo para o Anki**.
+Enquanto o Anki responde:
 
-O Anki Booster identifica seus cartões com mais erros e dificuldades e os reapresenta suavemente ao longo do dia em uma pequena janela flutuante, discreta e minimalista.
+> 📅 **"Quando devo rever este cartão novamente?"**
 
-Sem alterar o scheduler.  
-Sem modificar seu deck.  
-Sem substituir o Anki.
+O Booster responde:
+
+> 🎯 **"Quais cartões ainda estão frágeis neste momento?"**
+
+Para isso, ele mantém:
+
+✅ Scheduler próprio  
+✅ Métricas próprias  
+✅ Estado persistente próprio  
+✅ Sistema de domínio próprio  
+✅ Priorização própria
+
+Tudo sem alterar o funcionamento interno do Anki.
+
+---
+
+# ⚙️ Arquitetura
+
+```text
+┌───────────────────────┐
+│         Anki          │
+│   Official Scheduler  │
+└───────────┬───────────┘
+            │
+            ▼
+┌───────────────────────┐
+│      Anki Booster     │
+│  Companion SRS Engine │
+└───────────────────────┘
+```
+
+### Responsabilidades
+
+| Sistema | Responsabilidade |
+|----------|----------|
+| 🧠 Anki | Memória de longo prazo |
+| 🚀 Booster | Reforço contínuo |
+| 📈 Booster | Recuperação de cartões frágeis |
+| 🎯 Booster | Priorização por dificuldade recente |
+| 🔄 Booster | Micro-revisões ao longo do dia |
+
+---
+
+# 🧠 Priorização por Dificuldade Real
+
+A maioria das ferramentas semelhantes considera apenas:
+
+```text
+Lapses históricos
+```
+
+O Booster considera:
+
+- 🔥 Erros recentes do Anki
+- 🔥 Erros recentes do Booster
+- 📚 Histórico geral de lapses
+
+---
+
+## Fórmula de Prioridade
+
+```python
+score = (
+    anki_revlog_lapses * 100 +
+    booster_errors * 50 +
+    anki_lapses * 5
+)
+```
+
+### Pesos
+
+| Métrica | Peso |
+|----------|----------:|
+| 🔥 Erro recente no Anki | 100 |
+| ⚠️ Erro recente no Booster | 50 |
+| 📚 Lapse histórico | 5 |
+
+---
+
+# 🔬 Exemplo Real de Decisão
+
+## Card A
+
+```text
+Lapses históricos: 15
+Erros recentes: 0
+Ease: 250
+```
+
+## Card B
+
+```text
+Lapses históricos: 2
+Erros recentes hoje: 3
+Ease: 250
+```
+
+### Pontuação
+
+**Card A**
+
+```text
+15 × 5 = 75
+```
+
+**Card B**
+
+```text
+3 × 100 = 300
+```
+
+---
+
+## Resultado
+
+🏆 **Card B é exibido primeiro**
+
+Mesmo tendo menos lapses históricos.
+
+Porque o Booster considera que:
+
+> 🎯 **Dificuldade recente é mais importante que dificuldade antiga.**
+
+---
+
+# ⏳ Scheduler Independente
+
+Cada cartão possui seu próprio agendamento.
+
+```python
+card["next_due"] = now + card_delay
+```
+
+Além disso existe um ritmo global de exibição:
+
+```python
+self.next_global_show = min(
+    now + GLOBAL_CORRECT,
+    now + card_delay
+)
+```
+
+---
+
+## Resultado
+
+```text
+Scheduler do Anki
+          +
+Scheduler do Booster
+```
+
+Funcionando simultaneamente.
+
+Sem interferir um no outro.
+
+---
+
+# 📊 Seleção Inteligente
+
+Quando vários cartões estão disponíveis, o Booster escolhe automaticamente o mais relevante.
+
+```python
+card = min(
+    available_cards,
+    key=lambda c: self._calculate_priority(c, favs_set)
+)
+```
+
+A decisão considera:
+
+- 📚 Lapses
+- 📉 Ease Factor
+- 📆 Intervalo atual
+- 🔥 Erros recentes
+- 📈 Streak
+- ⭐ Favoritos
+- 📝 Revlog recente
+
+---
+
+# 🔄 Buffer Rotativo Contínuo
+
+Os cartões não são exibidos diretamente da fila principal.
+
+O Booster utiliza uma arquitetura de buffer ativo.
+
+```python
+self.active_cards = self.pool_cards[:BUFFER_SIZE]
+```
+
+Após cada revisão:
+
+```python
+self.active_cards.append(
+    self.active_cards.pop(idx)
+)
+```
+
+---
+
+## Fluxo
+
+```text
+Pool Global
+     │
+     ▼
+Buffer Ativo
+     │
+     ▼
+Card Exibido
+```
+
+### Benefícios
+
+✅ Menos repetição imediata
+
+✅ Fluxo contínuo
+
+✅ Melhor distribuição de exposição
+
+✅ Menos efeito de memorização por posição
+
+---
+
+# 📈 Estado Persistente Próprio
+
+O Booster mantém métricas independentes para cada cartão.
+
+```json
+{
+  "streak": 0,
+  "errors_recent": 0,
+  "next_due": 0,
+  "fav_level": 1
+}
+```
+
+Esses dados permanecem salvos mesmo após reiniciar o programa.
+
+---
+
+## O Booster Aprende
+
+Com o tempo ele constrói uma segunda camada de conhecimento sobre o usuário:
+
+- 📊 Cartões frágeis
+- 📈 Cartões dominados
+- 🔥 Erros recorrentes
+- ⭐ Cartões prioritários
+
+---
+
+# ⭐ Sistema de Progressão de Domínio
+
+Favoritos não são apenas marcadores.
+
+Eles entram em um sistema próprio de progressão.
+
+```python
+if card["fav_consecutive"] >= required:
+    card["fav_level"] += 1
+```
+
+---
+
+## Progressão
+
+```text
+⭐ N1
+   ↓
+⭐⭐ N2
+   ↓
+⭐⭐⭐ N3
+   ↓
+🏆 Graduado
+```
+
+### Regras
+
+✅ Acertos consecutivos avançam níveis
+
+❌ Um erro reinicia o progresso
+
+🏆 Domínio comprovado remove o favorito automaticamente
+
+---
+
+# 📡 Dupla Camada de Detecção de Erros
+
+O Booster monitora duas fontes independentes.
+
+## Fonte 1 — Anki
+
+```python
+anki_revlog_lapses
+```
+
+Obtidos diretamente do Revlog.
+
+---
+
+## Fonte 2 — Booster
+
+```python
+errors_recent
+```
+
+Obtidos durante as revisões extras.
+
+---
+
+## O que isso permite detectar?
+
+Situações como:
+
+```text
+O usuário já não erra mais no Anki...
+
+Mas continua errando
+quando encontra o cartão
+fora da sessão principal.
+```
+
+🎯 Exatamente o tipo de fragilidade que normalmente passa despercebida.
+
+---
+
+# 🔒 Segurança
+
+O Booster foi projetado para ser extremamente conservador.
+
+## Garantias
+
+✅ Leitura segura do banco
+
+✅ Cópia temporária da collection
+
+✅ Nenhuma alteração em `collection.anki2`
+
+✅ Nenhuma alteração no scheduler oficial
+
+✅ Nenhuma modificação de intervalos
+
+✅ Nenhuma modificação de decks
+
+✅ Nenhuma modificação de notas
+
+---
+
+# 🚀 Em Resumo
+
+O **Anki Booster** não é um addon tradicional.
+
+Ele é um:
+
+> 🧠 **Companion SRS Engine**
+
+que executa um segundo sistema de repetição espaçada em paralelo ao Anki.
+
+Com:
+
+✅ Scheduler próprio
+
+✅ Métricas próprias
+
+✅ Estado persistente próprio
+
+✅ Sistema de domínio próprio
+
+✅ Priorização baseada em dificuldade recente
+
+✅ Reforço contínuo ao longo do dia
+
+O resultado é um sistema capaz de transformar pequenos momentos livres em oportunidades constantes de consolidação da memória, atuando exatamente onde o aprendizado ainda apresenta fragilidade.
 
 ---
 
 ## 💡 Filosofia
 
-O Anki é excelente para sessões focadas de revisão ativa.
+```text
+Anki:
+"Quando devo rever novamente?"
 
-O Anki Booster adiciona uma segunda camada:
-um fluxo contínuo de micro-revisões durante o dia inteiro.
-
-Enquanto você trabalha, programa, estuda ou navega,
-os cards mais difíceis reaparecem suavemente em uma pequena interface flutuante.
-
-🎯 O objetivo é transformar tempo morto em reforço contínuo.
-
----
-
-## ✨ Funcionalidades
-
-- 🧠 **SRS Complementar Inteligente**
-  - Respeita o scheduler original do Anki
-  - Delay individual por resposta (`Fácil`, `Ok`, `Difícil`, `Errei`)
-  - Prioridade baseada em lapses, erros recentes e favoritos
-
-- 🔄 **Buffer Rotativo Infinito**
-  - Cards entram e saem automaticamente
-  - Revisões contínuas sem travar em um único deck
-  - Ideal para 50, 100, 200+ revisões extras por dia
-
-- ⭐ **Sistema de Favoritos com Progressão**
-  - Níveis `N1 → N2 → N3`
-  - Progressão automática
-  - Destaque para cards críticos
-
-- 📊 **Foco nos Pontos Fracos**
-  - Priorização inteligente baseada em:
-    - lapses
-    - ease
-    - erros recentes
-    - favoritos
-
-- 🌐 **Logger em Tempo Real**
-  - Interface web em:
-    ```txt
-    http://127.0.0.1:8895
-    ```
-  - Logs humanos e filtráveis
-  - Busca textual e níveis (`INFO`, `WARN`, `ERR`)
-
-- 📡 **API TCP Local**
-  - Controle externo via:
-    - CLI
-    - scripts
-    - addons do Anki
-
-- 🪶 **Leve & Não Invasivo**
-  - `<1%` CPU em idle
-  - Leitura segura do banco (`mode=ro`)
-  - Zero alteração no scheduler ou cards
-
-- 🎨 **UI Minimalista**
-  - Janela pequena e discreta
-  - Sempre no topo
-  - Animações suaves
-  - Temas dinâmicos
-  - Suporte completo a áudio/imagens do Anki
-
-- 🧩 **Controle via System Tray**
-  - Iniciar
-  - Pausar
-  - Reiniciar
-  - Abrir logs
-  - Encerrar serviço
-
-- 🔄 **Instalação Automática**
-  - `install.py` configura:
-    - arquivos
-    - autostart
-    - extensão do Anki
-    - estrutura de dados
-
----
-
-## 🖥️ Compatibilidade
-
-| Sistema | Status |
-|---|---|
-| Linux (Wayland/X11) | ✅ |
-| Hyprland | ✅ |
-| KDE Plasma | ✅ |
-| GNOME | ✅ |
-| Windows | ✅ |
-| macOS | ⚠️ Parcial |
-
----
-
-## 📦 Instalação Rápida (Recomendado)
-
-```bash
-# 1. Clone o repositório
-git clone https://github.com/SamSilSou/AnkiBooster.git
-
-# 2. Entre na pasta
-cd AnkiBooster
-
-# 3. Execute o instalador
-python3 install.py
+Booster:
+"O que ainda não está realmente dominado?"
 ```
 
-O instalador irá:
+Os dois sistemas trabalham juntos.
 
-- ✅ Copiar os arquivos para o diretório correto
-- ✅ Criar `anki_booster/`
-- ✅ Instalar a extensão no Anki
-- ✅ Configurar autostart opcional
-- ✅ Configurar reinício automático do serviço
+🧠 Anki constrói a memória.
 
----
-
-## 🔄 Atualização
-
-Basta executar novamente:
-
-```bash
-python3 install.py
-```
-
-Seus dados serão preservados automaticamente.
-
----
-
-## 🛠️ Instalação Manual (Opcional)
-
-Você também pode executar diretamente:
-
-```bash
-python3 booster_service.py
-```
-
-Os arquivos de estado serão criados no mesmo diretório do script.
-
----
-
-## 🚀 Uso
-
-1. Abra o Anki normalmente
-2. Inicie o Booster
-3. O Booster cria uma cópia segura do banco
-4. Os cards começam a aparecer automaticamente
-
-Para configurar:
-
-```txt
-Ferramentas → Anki Booster
-```
-
----
-
-## 📡 API TCP (Porta 8894)
-
-| Comando | Descrição |
-|---|---|
-| `START` | Inicia sessão |
-| `GET_FAVS` | Retorna favoritos |
-| `TOGGLE_FAV:<CID>` | Alterna favorito |
-| `SAVE_CONFIG:<JSON>` | Salva configuração |
-| `TOGGLE_PAUSE` | Pausa/retoma |
-
-### Exemplo via CLI
-
-```bash
-echo "START" | nc localhost 8894
-```
-
----
-
-## 💾 Backup dos Dados
-
-| Sistema | Caminho |
-|---|---|
-| Linux | `~/.local/bin/Anki_Booster/anki_booster/` |
-| Windows | `%LOCALAPPDATA%\Anki_Booster\anki_booster\` |
-| macOS | `~/Applications/Anki_Booster/anki_booster/` |
-
-Faça backup para preservar:
-
-- configurações
-- favoritos
-- estado dos cards
-- histórico diário
-
----
-
-## 🐛 Solução de Problemas
-
-| Problema | Solução |
-|---|---|
-| Permissão negada | Use sudo/Admin |
-| Extensão não instalou | Feche o Anki e rode novamente |
-| Autostart falhou | Verifique logs |
-| TCP não responde | Verifique a porta 8894 |
-
-### Logs no Linux
-
-```bash
-journalctl --user -u anki-booster -f
-```
-
----
-
-## 📂 Estrutura do Projeto
-
-```txt
-Anki_Booster/
-├── booster_service.py
-├── booster_utils.py
-├── theme.qml
-├── themes.json
-├── install.py
-└── anki_booster/
-    ├── anki_booster.db
-    ├── anki_booster_state.json
-    ├── anki_booster_daily.json
-    └── anki_booster_config.json
-```
-
----
-
-## ⚠️ Aviso Importante
-
-Este projeto **não é afiliado ao AnkiWeb**.
-
-O Booster:
-
-- ❌ Não modifica o scheduler
-- ❌ Não altera seus cards
-- ❌ Não escreve no `collection.anki2`
-- ✅ Funciona como ferramenta complementar externa
-
----
-
-## ⚖️ Licença
-
-Licenciado sob **GNU GPL v3.0**.
-
-- ✔ Pode usar
-- ✔ Pode modificar
-- ✔ Pode redistribuir
-- ✔ Deve manter código aberto
-
----
-
-## 💙 Apoie o Projeto
-
-Projeto gratuito e open-source.
-
-Se quiser apoiar:
-
-- ☕ Ko-fi
-- 💸 Liberapay
-- 🇧🇷 PIX
-
----
-
-<p align="center">
-<i>Feito com 💙 e café para a comunidade de estudos.</i>
-</p>
+🚀 Booster fortalece a memória.
