@@ -1,15 +1,22 @@
 {
   "light": {
-    "bg": "#fafafa",
+    "bg": "#e5e7eb",
     "surface": "#ffffff",
-    "text": "#2d3748",
+    "text": "#111827",
+    "accent": "#ffb4a8",
+    "accentText": "#561e16"
+  },
+  "medium": {
+    "bg": "#2b2b2b",
+    "surface": "#383838",
+    "text": "#f0f0f0",
     "accent": "#ffb4a8",
     "accentText": "#561e16"
   },
   "dark": {
-    "bg": "#251b1a",
-    "surface": "#322826",
-    "text": "#f1dfdc",
+    "bg": "#000000",
+    "surface": "#1a1a1a",
+    "text": "#e5e5e5",
     "accent": "#ffb4a8",
     "accentText": "#561e16"
   },

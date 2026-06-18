@@ -281,14 +281,19 @@ def _wrap_html(content: str, starred: bool, level: int, consecutive: int,
 # ───────────────── MEDIA PARSER ─────────────────
 def _parse_anki_media(text: str, media_dir: Optional[str]) -> str:
     """
-    Converte tags [sound:xxx.mp3] do Anki para <audio> HTML5 embutido em Base64.
-     FIX: prefixo `data:` adicionado para funcionar no WebView
+    Converte [sound:xxx.mp3] e <img src="xxx.jpg"> do Anki para Data URIs em Base64.
+    Garante compatibilidade total com WebEngine sem precisar de baseUrl.
     """
     if not text or not media_dir:
         return text
 
-    def replace_audio(match):
-        filename = match.group(1).strip().replace('\\', '/')
+    def replace_media(match):
+        tag = match.group(0)
+        # Extrai o nome do arquivo (suporta [sound:xxx] ou <img src="xxx">)
+        src_match = re.search(r'(?:sound:|src=")([^"\]]+)', tag)
+        if not src_match: return tag
+        
+        filename = src_match.group(1).strip().replace('\\', '/')
         filepath = os.path.join(media_dir, filename)
         
         if os.path.exists(filepath):
@@ -297,23 +302,29 @@ def _parse_anki_media(text: str, media_dir: Optional[str]) -> str:
                     b64 = base64.b64encode(f.read()).decode('utf-8')
                 
                 ext = os.path.splitext(filename)[1].lower()
+                # Mapeamento de MIME types
                 mime_map = {
-                    '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg',
-                    '.wav': 'audio/wav', '.flac': 'audio/flac'
+                    '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.wav': 'audio/wav', '.flac': 'audio/flac',
+                    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif',
+                    '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp'
                 }
-                mime = mime_map.get(ext, 'audio/mpeg')
+                mime = mime_map.get(ext, 'application/octet-stream')
                 
-                # FIX CRÍTICO: prefixo `data:` para data URI funcionar
-                return f'<audio controls src="data:{mime};base64,{b64}"></audio>'
+                if tag.startswith('[sound:'):
+                    return f'<audio controls src="data:{mime};base64,{b64}"></audio>'
+                else:
+                    return f'<img src="data:{mime};base64,{b64}" style="max-width:100%;height:auto;">'
             except Exception as e:
-                log(f"⚠️ Erro ao ler áudio {filename}: {e}", "WARN")
-                return f'<span style="color:red; font-size:12px">[Audio: {filename}]</span>'
-        
-        return match.group(0)
+                log(f"⚠️ Erro ao carregar mídia {filename}: {e}", "WARN")
+                return tag
+        return tag
 
-    return re.sub(r'\[sound:([^\]]+)\]', replace_audio, text, flags=re.IGNORECASE)
+    # Processa sons e imagens
+    text = re.sub(r'\[sound:([^\]]+)\]', replace_media, text, flags=re.IGNORECASE)
+    text = re.sub(r'<img\b[^>]*src=["\']([^"\']+)["\'][^>]*>', replace_media, text, flags=re.IGNORECASE)
+    return text
 
-# ───────────────── CARD LOADER ─────────────────
+# ───────────────── CARD LOADER (ATUALIZADO COM MÉTRICAS DO ANKI) ─────────────────
 def load_cards_from_anki(
     anki_db_path: str,
     favs: List[str],
@@ -346,36 +357,60 @@ def load_cards_from_anki(
         cutoff = int((time.time() - revlog_days * 86400) * 1000)  # 86400 = 24*60*60
         conn = sqlite3.connect(temp_db)
 
-        # Query: Favoritos (se houver)
+                # 🆕 QUERY SEGURA: usa subquery para revlog, evita corromper n.flds
+        revlog_subquery = """
+            SELECT cid,
+                COUNT(*) as total_reps,
+                SUM(CASE WHEN ease = 1 THEN 1 ELSE 0 END) as revlog_lapses,
+                SUM(CASE WHEN type = 1 THEN 1 ELSE 0 END) as revlog_hard,
+                SUM(CASE WHEN type = 2 THEN 1 ELSE 0 END) as revlog_good,
+                SUM(CASE WHEN type = 3 THEN 1 ELSE 0 END) as revlog_easy,
+                AVG(factor) as avg_ease_factor,
+                MAX(id) as last_review_ts
+            FROM revlog
+            WHERE id > ?
+            GROUP BY cid
+        """
+        
+        # Favoritos
         fav_raw, fav_ints = [], []
         if favs:
-            try:
-                fav_ints = [int(f) for f in favs]
-            except ValueError:
-                fav_ints = []
+            try: fav_ints = [int(f) for f in favs]
+            except ValueError: fav_ints = []
             if fav_ints:
                 placeholders = ','.join('?' * len(fav_ints))
-                fav_raw = conn.execute(
-                    f"SELECT DISTINCT c.id, n.flds, n.mid FROM cards c JOIN notes n ON c.nid = n.id WHERE c.id IN ({placeholders})",
-                    fav_ints
-                ).fetchall()
+                fav_query = f"""
+                    SELECT c.id, n.flds, n.mid,
+                        c.lapses, c.factor, c.ivl, c.type,
+                        COALESCE(r.total_reps, 0), COALESCE(r.revlog_lapses, 0),
+                        COALESCE(r.revlog_hard, 0), COALESCE(r.revlog_good, 0),
+                        COALESCE(r.revlog_easy, 0), COALESCE(r.avg_ease_factor, 0),
+                        COALESCE(r.last_review_ts, 0)
+                    FROM cards c JOIN notes n ON c.nid = n.id
+                    LEFT JOIN ({revlog_subquery}) r ON c.id = r.cid
+                    WHERE c.id IN ({placeholders})
+                """
+                fav_raw = conn.execute(fav_query, (cutoff, *fav_ints)).fetchall()
 
-        # Query: Não-favoritos com revlog recente
-        # SQL seguro com placeholders parameterizados
+        # Não-favoritos
         revlog_placeholders = ','.join('?' * len(revlog_types))
         exclude_clause = f"AND c.id NOT IN ({','.join(['?']*len(fav_ints))})" if fav_ints else ""
         
-        query = f"""
-            SELECT DISTINCT c.id, n.flds, n.mid 
-            FROM cards c 
-            JOIN notes n ON c.nid = n.id 
-            JOIN revlog r ON c.id = r.cid 
-            WHERE r.id > ? AND r.type IN ({revlog_placeholders}) {exclude_clause}
+        non_fav_query = f"""
+            SELECT c.id, n.flds, n.mid,
+                c.lapses, c.factor, c.ivl, c.type,
+                COALESCE(r.total_reps, 0), COALESCE(r.revlog_lapses, 0),
+                COALESCE(r.revlog_hard, 0), COALESCE(r.revlog_good, 0),
+                COALESCE(r.revlog_easy, 0), COALESCE(r.avg_ease_factor, 0),
+                COALESCE(r.last_review_ts, 0)
+            FROM cards c JOIN notes n ON c.nid = n.id
+            LEFT JOIN ({revlog_subquery}) r ON c.id = r.cid
+            WHERE c.id IN (
+                SELECT DISTINCT cid FROM revlog WHERE id > ? AND type IN ({revlog_placeholders}) {exclude_clause}
+            )
         """
-        
-        # Parâmetros na ordem correta: cutoff, revlog_types..., fav_ints...
-        params = (cutoff, *revlog_types, *fav_ints) if fav_ints else (cutoff, *revlog_types)
-        non_fav_raw = conn.execute(query, params).fetchall()
+        params = (cutoff, cutoff, *revlog_types, *fav_ints) if fav_ints else (cutoff, cutoff, *revlog_types)
+        non_fav_raw = conn.execute(non_fav_query, params).fetchall()
 
         # Extrai modelos (para fallback de campos quando front_fields/back_fields são None)
         models_map = {}
@@ -387,7 +422,6 @@ def load_cards_from_anki(
                     mid_val = int(mid_str)
                     fld_names = [f['name'] for f in model.get('flds', [])]
                     qfmt = model.get('tmpls', [{}])[0].get('qfmt', '')
-                    # Regex para extrair nomes de campos usados no template
                     used = set(re.findall(r'\{[\{#^]?\s*(?:[\w]+:)?\s*([^\s{}]+?)\s*[\}]?\}', qfmt))
                     f_idx = [i for i, n in enumerate(fld_names) if n in used] or [0]
                     b_idx = [i for i in range(len(fld_names)) if i not in f_idx] or list(range(len(fld_names)))
@@ -400,19 +434,27 @@ def load_cards_from_anki(
         # Combina e deduplica
         raw = fav_raw + non_fav_raw
         seen = set()
-        unique = [(cid, flds, mid) for cid, flds, mid in raw if cid not in seen and not seen.add(cid)]
+        unique = [row for row in raw if row[0] not in seen and not seen.add(row[0])]
 
         MEDIA_DIR = os.path.join(os.path.dirname(anki_db_path), "collection.media")
         cards = []
         
-        for cid, flds, mid_val in unique:
+        for row in unique:
+            cid, flds, mid_val = row[0], row[1], row[2]
+            anki_lapses = row[3] or 0
+            # CORREÇÃO: factor vem como 2500, dividimos por 10 para ter 250
+            anki_factor = row[4] or 2500
+            anki_ease = anki_factor / 10  # Normaliza para escala 250 = padrão
+            anki_interval = row[5] or 0
+            card_type = row[6] or 0
+            total_reps = row[7] or 0
+            revlog_lapses = row[8] or 0
+            avg_ease_factor = row[12] or 0
+            last_review_ts = row[13] or 0
+            
             all_f = flds.split("\x1f")
             s = state.get(str(cid), {})
             
-            # Lógica de campos: service decide, utils executa
-            # - front_fields/back_fields = None → usa fallback do modelo
-            # - front_fields/back_fields = [] → usa [0] (primeiro campo) como fallback seguro
-            # - front_fields/back_fields = [1,2] → usa esses índices exatos
             if front_fields is not None:
                 f_idx = front_fields if front_fields else [0]
             else:
@@ -423,12 +465,13 @@ def load_cards_from_anki(
             else:
                 b_idx = models_map.get(mid_val, ([0], list(range(len(all_f)))))[1]
             
-            # Monta HTML com parsing de mídia
             front_parts = [all_f[i] for i in f_idx if 0 <= i < len(all_f) and all_f[i].strip()]
             back_parts = [all_f[i] for i in b_idx if 0 <= i < len(all_f) and all_f[i].strip()]
             
             front_html = "<br>".join(_parse_anki_media(f, MEDIA_DIR) for f in front_parts)
             back_html = "<br>".join(_parse_anki_media(f, MEDIA_DIR) for f in back_parts)
+
+            lapse_ratio = (revlog_lapses / total_reps) if total_reps > 0 else 0.0
 
             cards.append({
                 "id": cid,
@@ -439,13 +482,43 @@ def load_cards_from_anki(
                 "errors_recent": s.get("errors_recent", 0),
                 "fav_level": s.get("fav_level", 1),
                 "fav_consecutive": s.get("fav_consecutive", 0),
-                "next_due": float(s.get("next_due", 0))
+                "next_due": float(s.get("next_due", 0)),
+                # Métricas reais do Anki (com factor normalizado)
+                "anki_lapses": anki_lapses,
+                "anki_ease": anki_ease,              # ← agora correto: 250 = padrão
+                "anki_factor": anki_factor,           # ← valor bruto do Anki (2500)
+                "anki_interval": anki_interval,
+                "anki_card_type": card_type,
+                "anki_total_reps": total_reps,
+                "anki_revlog_lapses": revlog_lapses,
+                "anki_lapse_ratio": lapse_ratio,
+                "anki_last_review": last_review_ts,
+                "anki_avg_ease_factor": avg_ease_factor
             })
 
-        # SEM FILTRO DE next_due, SEM FILTRO DE LIMITE DIÁRIO
-        # O service decide o que é elegível. Aqui só retornamos os brutos.
-        return cards[:limit_cards]  # Apenas limite global de segurança
+        return cards[:limit_cards]
             
     finally:
         if temp_dir and os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
+
+def generate_anki_report(cards, output_path):
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(
+            "ID | LAPSOS | RATIO | EASE | IVL | ERROS_RECENTES | STREAK | FRENTE\n"
+        )
+        f.write("=" * 180 + "\n")
+
+        for c in cards:
+            front = re.sub(r"<[^>]+>", "", c.get("front", "")).strip()
+
+            f.write(
+                f"{c['id']} | "
+                f"{c.get('anki_lapses',0)} | "
+                f"{c.get('anki_revlog_lapses',0)} | "
+                f"{c.get('anki_total_reps',0)} | "
+                f"{c.get('anki_lapse_ratio',0):.2f} | "
+                f"{c.get('anki_ease',250):.0f} | "
+                f"{c.get('anki_interval',0)} | "
+                f"{front[:80]}\n"
+            )

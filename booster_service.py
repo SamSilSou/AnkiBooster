@@ -25,7 +25,7 @@ from booster_utils import (
     load_config, load_json_file, save_json_file,
     log, get_all_favs, toggle_fav, graduate_fav, is_anki_closed, get_anki_db,
     _wrap_html, load_cards_from_anki,
-    load_theme, set_theme
+    load_theme, set_theme, generate_anki_report
 )
 
 VALID_CONFIG_KEYS = {
@@ -270,6 +270,18 @@ class App:
                 back_fields=self.config.get("BACK_FIELDS"),
             )
         
+        # 🆕 ORDENA A FILA POR PRIORIDADE DO ANKI ANTES DE CARREGAR NO BUFFER
+        favs_temp = set(get_all_favs())
+        self.cards.sort(key=lambda c: self._calculate_priority(c, favs_temp))
+
+        # GERA RELATÓRIO TXT AUTOMÁTICO (agora ordenado por prioridade)
+        report_path = os.path.join(BOOSTER_DATA_DIR, "anki_booster_stats.txt")
+
+        generate_anki_report(
+            self.cards,
+            report_path
+        )
+
         if self.cards:
             self.prepare_buffer()
             self.allow_showing = True
@@ -328,6 +340,17 @@ class App:
                     back_fields=self.config.get("BACK_FIELDS"),
                 )
             
+            # ORDENA A FILA POR PRIORIDADE DO ANKI ANTES DE CARREGAR NO BUFFER, DESSE JEITO RESPEITA A ORDeM CORRETA DE DIFICULDADE
+            favs_temp = set(get_all_favs())
+            self.cards.sort(key=lambda c: self._calculate_priority(c, favs_temp))
+            
+            # GERA RELATÓRIO TXT AUTOMÁTICO (agora ordenado por prioridade)
+            report_path = os.path.join(BOOSTER_DATA_DIR, "anki_booster_stats.txt")
+            generate_anki_report(
+                self.cards,
+                report_path
+            )
+
             if self.cards:
                 favs_in_cards = [c for c in self.cards if str(c["id"]) in get_all_favs()]
                 self.logger.log(f"✅ {len(self.cards)} cards carregados | {len(favs_in_cards)} são favoritos", "OK")
@@ -407,7 +430,7 @@ class App:
             self.paused = not self.paused
             QTimer.singleShot(0, lambda: self.tray.set_paused(self.paused))
             estado = "PAUSED" if self.paused else "RUNNING"
-            self.logger.log(f"⏸️ Booster {'PAUSADO' if self.paused else 'RETOMADO'}!", "WARN" if self.paused else "OK")
+            self.logger.log(f"⏸️ Booster {'PAUSADO' if paused else 'RETOMADO'}!", "WARN" if self.paused else "OK")
             conn.sendall(estado.encode())
         elif cmd == "GET_CONFIG":
             conn.sendall(json.dumps(self.config).encode())
@@ -447,9 +470,69 @@ class App:
         self.logger.log(f"📦 Buffer {len(self.active_cards)} | Pool {len(self.pool_cards)}")
 
     def _calculate_priority(self, card: dict, favs_set: set) -> tuple:
+        """
+        Calcula a prioridade de exibição de um card.
+
+        Filosofia:
+        O Booster deve priorizar dificuldades RECENTES em vez de
+        dificuldades históricas. Se um card foi errado hoje, ele deve
+        aparecer antes de um card que acumulou lapses há meses, mas que
+        atualmente está sendo respondido corretamente.
+
+        Score principal:
+            +100 -> Cada "Again" recente registrado no revlog do Anki
+            +50  -> Cada erro recente registrado pelo próprio Booster
+            +5   -> Cada lapse histórico acumulado pelo Anki
+
+        Justificativa dos pesos:
+            - Um erro recente no Anki vale mais que vários lapses antigos.
+            - Erros do Booster têm peso intermediário, pois indicam
+              dificuldade fora do fluxo normal do Anki.
+            - Lapses históricos ainda contam, mas com peso reduzido,
+              já que o próprio Anki já os utiliza para ajustar os
+              intervalos de revisão.
+
+        Desempates (ordem de prioridade):
+            1. Score total de dificuldade
+            2. Ease do Anki (menor = mais difícil)
+            3. Intervalo do Anki (menor = menos consolidado)
+            4. Streak do Booster (menor = menos dominado)
+            5. Favorito (bônus final)
+
+        Observação:
+        A função retorna uma tupla lexicográfica utilizada por min().
+        Quanto MENOR a tupla, MAIOR a prioridade do card.
+        """
+
         cid_str = str(card["id"])
+
+        # ───── Métricas do Anki ─────
+        anki_lapses = card.get("anki_lapses", 0)
+        anki_ease = card.get("anki_ease", 250)
+        anki_interval = card.get("anki_interval", 0)
+        anki_revlog_lapses = card.get("anki_revlog_lapses", 0)
+
+        # ───── Métricas do Booster ─────
+        booster_errors = card.get("errors_recent", 0)
+        booster_streak = card.get("streak", 0)
+
+        # Cartões favoritos recebem um pequeno desempate positivo
         fav_bonus = FAV_BONUS if cid_str in favs_set else 0
-        return (-card.get("errors_recent", 0), card.get("streak", 0), -fav_bonus)
+
+        # Score principal de dificuldade
+        score = (
+            anki_revlog_lapses * 100 +  # Erros recentes detectados pelo Anki
+            booster_errors * 50 +       # Erros recentes detectados pelo Booster
+            anki_lapses * 5             # Histórico geral de lapses
+        )
+
+        return (
+            -score,          # 1º: dificuldade recente
+            anki_ease,       # 2º: ease menor = mais difícil
+            anki_interval,   # 3º: intervalo menor = menos consolidado
+            booster_streak,  # 4º: streak menor = menos dominado
+            -fav_bonus,      # 5º: favoritos ganham desempate
+        )
 
     def loop(self):
         if self.paused: return
@@ -612,6 +695,7 @@ class App:
         next_hr = datetime.datetime.fromtimestamp(self.next_global_show).strftime("%H:%M:%S")
         source = "card_delay" if card_delay < GLOBAL_CORRECT else "GLOBAL_CORRECT"
         self.logger.log(f"⏳ Ritmo global: próximo card em {delay_real}s ({next_hr}) [fonte: {source}]")
+        self.logger.log("-------------------------------------------------")
         
         self.reviewing = False
         self._current_card = None

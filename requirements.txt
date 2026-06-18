@@ -1,0 +1,38 @@
+# =============================================================================
+# Anki Booster - Dependências Python
+# =============================================================================
+# Para instalar: pip install -r requirements.txt
+# =============================================================================
+
+# ───────────────── UI/Framework Principal ─────────────────
+# PyQt6: Interface gráfica, QML, sinais/slots, janela frameless
+PyQt6>=6.4.0
+
+# PyQt6-WebEngine: Renderização HTML/CSS/JS dos cards via QtWebEngine
+# Necessário para o WebEngineView no theme.qml (áudio Base64, scroll oculto, etc.)
+PyQt6-WebEngine>=6.4.0
+
+# ───────────────── Dependências Implícitas (instaladas automaticamente) ─────────────────
+# As abaixo são dependências do PyQt6 e NÃO precisam ser listadas explicitamente,
+# mas estão documentadas aqui para referência:
+#
+# PyQt6-sip>=13.4.0      # Binding generator para C++ ↔ Python
+# PyQt6-Qt6>=6.4.0       # Bibliotecas Qt6 subjacentes
+#
+# Se houver erro de import, tente reinstalar:
+#   pip uninstall PyQt6 PyQt6-WebEngine -y && pip install -r requirements.txt
+
+# ───────────────── Desenvolvimento (Opcional) ─────────────────
+# Descomente as linhas abaixo se for contribuir ou testar o projeto:
+
+# pytest>=7.0.0          # Testes unitários
+# black>=23.0.0          # Formatação automática de código
+# flake8>=6.0.0          # Linter para verificar estilo PEP8
+# mypy>=1.0.0            # Type checking estático
+
+# ───────────────── Notas Importantes ─────────────────
+# • Python 3.8+ é recomendado (f-strings, typing, pathlib)
+# • No Linux: pode ser necessário instalar dependências do sistema:
+#     sudo apt install qt6-base-dev qt6-webengine-dev libegl1 libopengl0
+# • No Windows: o instalador oficial do PyQt6 já inclui tudo necessário
+# • No macOS: pode precisar de Xcode command line tools (xcode-select --install)

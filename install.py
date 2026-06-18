@@ -19,7 +19,7 @@ DEFAULT_CONFIG = {
     "BUFFER_SIZE": 5,
     "MAX_DAILY": 3,
     "REVLOG_DAYS": 3,
-    "LIMIT_CARDS": 50,
+    "LIMIT_CARDS": 15,
     "FAVS_PRIORITY": 3,
     "REVLOG_TYPES": [0, 1, 2, 3],
     "FRONT_FIELDS": None,
