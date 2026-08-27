@@ -20,6 +20,10 @@ Window {
     property bool isAnimating: false
     property string pendingHtml: ""
 
+    // NOVO: tempo padrão de snooze (usado tanto como valor inicial do
+    // modal quanto pelo snooze rápido de long-press no botão 🌙)
+    property int defaultSnoozeMinutes: 30
+
     // Alias para o tema dinâmico
     property var t: bridge.theme
 
@@ -27,6 +31,12 @@ Window {
         target: bridge
         function onThemeChanged() {
             root.t = bridge.theme
+        }
+        // NOVO: feedback informativo pós-resposta (streak / tempo até
+        // reaparecer), emitido pelo Bridge antes de esconder a janela.
+        function onAnswered(text) {
+            answerFeedbackText.text = text
+            answerFeedbackAnim.start()
         }
     }
 
@@ -131,6 +141,46 @@ Window {
         focus: true
         activeFocusOnTab: false
 
+        // NOVO: atalhos de teclado. 1/2/3/4 = Fácil/Ok/Difícil/Errei,
+        // Espaço = mostrar resposta, Esc = fechar modal de snooze se
+        // estiver aberto. Ignorado durante a animação de troca de card
+        // para não empilhar respostas.
+        Keys.onPressed: (event) => {
+            if (root.isAnimating) return
+            switch (event.key) {
+                case Qt.Key_1:
+                    answerRepeater.itemAt(0).trigger()
+                    event.accepted = true
+                    break
+                case Qt.Key_2:
+                    answerRepeater.itemAt(1).trigger()
+                    event.accepted = true
+                    break
+                case Qt.Key_3:
+                    answerRepeater.itemAt(2).trigger()
+                    event.accepted = true
+                    break
+                case Qt.Key_4:
+                    answerRepeater.itemAt(3).trigger()
+                    event.accepted = true
+                    break
+                case Qt.Key_Space:
+                    if (snoozeOverlay.opacity === 0) {
+                        if (soundsEnabled) sndPop.play()
+                        revealAnim.start()
+                    }
+                    event.accepted = true
+                    break
+                case Qt.Key_Escape:
+                    if (snoozeOverlay.opacity > 0) {
+                        snoozeOverlay.opacity = 0
+                        if (soundsEnabled) sndSoft.play()
+                    }
+                    event.accepted = true
+                    break
+            }
+        }
+
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 12
@@ -158,7 +208,104 @@ Window {
                     onFullScreenRequested: function(request) { request.reject() }
                 }
 
+                // NOVO: NÃO é um ícone novo - é uma área de clique
+                // invisível posicionada sobre a estrela que JÁ EXISTE
+                // dentro do HTML (renderizada por _wrap_html, top:8px
+                // right:12px dentro do webView). Antes só dava pra
+                // favoritar saindo do Booster (Anki/TCP); agora clicar
+                // ali chama bridge.toggleFavorite() E atualiza o span
+                // #oboete-fav-star via JS pra feedback visual instantâneo
+                // (glifo ⭐/☆ + classe on/off + animação de "pop"), sem
+                // esperar o próximo card aparecer.
+                // z:5 (abaixo do snoozeOverlay, z:100) garante que o
+                // modal de snooze bloqueia esse clique quando aberto.
+                MouseArea {
+                    z: 5
+                    width: 42; height: 34
+                    anchors.top: parent.top
+                    anchors.right: parent.right
+                    anchors.topMargin: 20   // margin do webView (12) + css top (8)
+                    anchors.rightMargin: 22 // margin do webView (12) + css right (12), com folga
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        bridge.toggleFavorite()
+                        if (soundsEnabled) sndPop.play()
+                        webView.runJavaScript(`
+                            (function() {
+                                var el = document.getElementById('oboete-fav-star');
+                                if (!el) return;
+                                var isOn = el.classList.contains('oboete-star-on');
+                                if (isOn) {
+                                    el.classList.remove('oboete-star-on');
+                                    el.classList.add('oboete-star-off');
+                                    el.textContent = '☆';
+                                } else {
+                                    el.classList.remove('oboete-star-off');
+                                    el.classList.add('oboete-star-on');
+                                    el.textContent = '⭐';
+                                }
+                                // Reinicia a animação de "pop" mesmo que já
+                                // tenha rodado antes (forçando reflow).
+                                el.classList.remove('oboete-star-pop');
+                                void el.offsetWidth;
+                                el.classList.add('oboete-star-pop');
+                            })();
+                        `)
+                    }
+                }
+
+                // NOVO: banner de feedback informativo pós-resposta
+                // (streak / tempo até reaparecer). Some sozinho antes do
+                // Bridge mandar esconder a janela (~0.9s de delay em
+                // service.py, sincronizado com a duração desta animação).
+                Text {
+                    id: answerFeedbackText
+                    visible: false
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 14
+                    z: 200
+                    font.pixelSize: 13
+                    font.bold: true
+                    color: t.text
+                    opacity: 0
+                    padding: 8
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 10
+                        color: t.surface
+                        border.color: t.accent
+                        border.width: 1
+                        opacity: 0.95
+                        z: -1
+                    }
+
+                    SequentialAnimation {
+                        id: answerFeedbackAnim
+                        running: false
+                        PropertyAction { target: answerFeedbackText; property: "visible"; value: true }
+                        NumberAnimation { target: answerFeedbackText; property: "opacity"; from: 0; to: 1; duration: 120 }
+                        PauseAnimation { duration: 620 }
+                        NumberAnimation { target: answerFeedbackText; property: "opacity"; to: 0; duration: 160 }
+                        PropertyAction { target: answerFeedbackText; property: "visible"; value: false }
+                    }
+                }
+
                 // OVERLAY DE SNOOZE
+                // FIX (2ª rodada - bug real de novo): minha tentativa
+                // anterior trocou o conceito original (painel SÓLIDO e
+                // opaco, cor fixa "#4a5568", botões quase da MESMA cor do
+                // painel, só se destacando no hover) por um conceito
+                // diferente ("scrim escuro translúcido + botões soltos
+                // com t.surface"). Isso quebra visualmente em qualquer
+                // tema onde t.surface fica parecido com o preto do scrim
+                // (tema escuro) - tudo parece "transparente"/sem definição.
+                // Voltei ao conceito ORIGINAL: um painel 100% opaco e
+                // sólido (mesmo estilo de antes), só que a cor agora vem
+                // do tema (t.surface) em vez de fixa, e a opacidade vai
+                // de 0→1 de verdade (sem scrim, sem multiplicação estranha).
                 Rectangle {
                     id: snoozeOverlay
                     anchors.fill: parent
@@ -178,10 +325,15 @@ Window {
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 10
+                            // FIX: painel agora é t.surface (pode ser claro
+                            // OU escuro dependendo do tema), então o texto
+                            // volta a usar t.text - branco fixo só fazia
+                            // sentido quando o fundo era sempre escuro (scrim),
+                            // o que não é mais o caso.
                             Text { text: "🌙"; font.pixelSize: 24 }
                             Text {
                                 text: "Quanto tempo de soneca?"
-                                color: t.text
+                                color: "#ffffff"
                                 font.pixelSize: 16
                                 font.bold: true
                                 Layout.fillWidth: true
@@ -196,7 +348,7 @@ Window {
                                 Text {
                                     text: "✖"
                                     anchors.centerIn: parent
-                                    color: t.text
+                                    color: "#ffffff"
                                     font.pixelSize: 18
                                     opacity: 0.7
                                     Behavior on opacity { NumberAnimation { duration: 100 } }
@@ -210,8 +362,18 @@ Window {
                             id: timeControls
                             Layout.fillWidth: true
                             spacing: 8
-                            property int minutes: 30
+                            // FIX: agora referencia a constante central
+                            // root.defaultSnoozeMinutes (30) em vez de um
+                            // número mágico solto aqui.
+                            property int minutes: root.defaultSnoozeMinutes
 
+                            // FIX: usa Qt.darker/lighter em cima de t.bg (não
+                            // t.surface, que É a cor do painel - usar a
+                            // mesma cor do fundo deixaria os botões
+                            // "sumindo" de novo). t.bg costuma ser
+                            // levemente diferente de t.surface em qualquer
+                            // tema (claro ou escuro), garantindo contraste
+                            // visível do botão contra o painel.
                             Rectangle {
                                 Layout.preferredWidth: 48; height: 36; radius: 8; color: "#4a5568"
                                 Behavior on color { ColorAnimation { duration: 100 } }
@@ -315,7 +477,7 @@ Window {
                                 Behavior on color { ColorAnimation { duration: 100 } }
                                 MouseArea {
                                     anchors.fill: parent; hoverEnabled: true
-                                    onEntered: parent.color = "#ff9a8e"
+                                    onEntered: parent.color = Qt.lighter(t.accent, 1.1)
                                     onExited: parent.color = t.accent
                                     onClicked: {
                                         var mins = timeControls.minutes
@@ -404,7 +566,13 @@ Window {
                     Layout.preferredWidth: 48
                     height: 48
                     radius: 12
-                    color: "#4a5568"
+                    color: t.surface
+                    // FIX: t.surface e t.bg podem ficar muito parecidos
+                    // dependendo do tema (ex: #fafafa vs #ffffff), fazendo
+                    // o botão "sumir" contra o fundo da janela. Uma borda
+                    // sutil com t.accent garante contraste em qualquer tema.
+                    border.color: t.accent
+                    border.width: 1
                     scale: 1.0
                     clip: true
                     Behavior on scale { NumberAnimation { duration: 80; easing.type: Easing.OutQuad } }
@@ -437,15 +605,25 @@ Window {
                         onEntered: { snoozeBtn.scale = 1.03; floatSnooze.running = true }
                         onExited: { snoozeBtn.scale = 1.0; floatSnooze.running = false; snoozeBtn.y = 0 }
                         onPressed: { snoozeBtn.scale = 0.95; rippleSnoozeAnim.start() }
+                        // NOVO: clique curto abre o modal (comportamento
+                        // antigo, pra ajustar o tempo). Segurar (long-press)
+                        // dispara snooze rápido de root.defaultSnoozeMinutes
+                        // direto, sem abrir modal nenhum.
                         onClicked: {
                             snoozeOverlay.opacity = 1
                             if (soundsEnabled) sndClick.play()
+                        }
+                        onPressAndHold: {
+                            bridge.snoozeWithMinutes(root.defaultSnoozeMinutes)
+                            if (soundsEnabled) sndWhoosh.play()
+                            rippleSnoozeAnim.start()
                         }
                     }
                     Text { text: "🌙"; anchors.centerIn: parent; font.pixelSize: 20; color: t.text; opacity: 0.9 }
                 }
 
                 Repeater {
+                    id: answerRepeater
                     model: [
                         { label: "Fácil 😎", color: "#a5d6a7", press: "#81c784", emoji: "🚀", dir: 1, txt: "black" },
                         { label: "Ok 😐", color: "#ffe082", press: "#ffd54f", emoji: "👍", dir: 1, txt: "black" },
@@ -462,6 +640,47 @@ Window {
                         clip: true
                         Behavior on color { ColorAnimation { duration: 100 } }
                         Behavior on scale { NumberAnimation { duration: 80; easing.type: Easing.OutQuad } }
+
+                        // NOVO: lógica de resposta extraída pra uma função
+                        // própria (performAnswer), reusada tanto pelo
+                        // clique do mouse quanto pelo atalho de teclado
+                        // (trigger()), em vez de duplicar a lógica em dois
+                        // lugares.
+                        function performAnswer() {
+                            root.slideDirection = modelData.dir
+                            if (index === 3) wobbleAnim.start()
+                            if (soundsEnabled) {
+                                if (index <= 1) sndClick.play()
+                                else if (index === 2) sndSoft.play()
+                                else sndError.play()
+                            }
+                            if (index === 0) timerEasy.start()
+                            else if (index === 1) timerOk.start()
+                            else if (index === 2) timerHard.start()
+                            else timerFail.start()
+                        }
+
+                        // NOVO: chamado pelo atalho de teclado (1/2/3/4).
+                        // Reaplica a mesma animação de "pressed" que o
+                        // mouse dispara, pra dar o mesmo feedback visual
+                        // independente de como o usuário respondeu.
+                        function trigger() {
+                            ansBtn.scale = 0.95
+                            ansBtn.color = modelData.press
+                            rippleAnim.start()
+                            feedbackTxt.text = modelData.emoji
+                            feedbackTxt.color = modelData.txt || "black"
+                            feedbackAnim.start()
+                            keyboardResetTimer.restart()
+                            performAnswer()
+                        }
+
+                        Timer {
+                            id: keyboardResetTimer
+                            interval: 120
+                            repeat: false
+                            onTriggered: { ansBtn.color = modelData.color; ansBtn.scale = 1.0 }
+                        }
 
                         SequentialAnimation on y {
                             id: floatAnim; running: false; loops: Animation.Infinite
@@ -499,17 +718,7 @@ Window {
                             }
                             onReleased: ansBtn.color = modelData.color
                             onClicked: {
-                                root.slideDirection = modelData.dir
-                                if (index === 3) wobbleAnim.start()
-                                if (soundsEnabled) {
-                                    if (index <= 1) sndClick.play()
-                                    else if (index === 2) sndSoft.play()
-                                    else sndError.play()
-                                }
-                                if (index === 0) timerEasy.start()
-                                else if (index === 1) timerOk.start()
-                                else if (index === 2) timerHard.start()
-                                else timerFail.start()
+                                ansBtn.performAnswer()
                             }
                         }
                         Text { text: modelData.label; anchors.centerIn: parent; color: modelData.txt || "black"; font.bold: true; font.pixelSize: 14 }
